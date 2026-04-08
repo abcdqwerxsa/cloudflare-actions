@@ -1,0 +1,39 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "cloudflare-actions"
+main = "worker/index.ts"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "cloudflare-actions-db"
+database_id = "a361ed87-4f27-4b23-9658-fec49113df85"
+
+# Durable Objects
+[durable_objects]
+bindings = [
+  { name = "RUNNER_CONTAINER", class_name = "RunnerContainer" }
+]
+
+# Container configuration - linked to RunnerContainer DO
+[[containers]]
+class_name = "RunnerContainer"
+image = "./Dockerfile"
+instance_type = "lite"
+
+# Cron triggers - runs every minute to check for scheduled tasks
+[triggers]
+crons = ["* * * * *"]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RunnerContainer"]
+
+# Environment variables
+[vars]
+API_KEY = "change-me-in-production"
+
+# Development overrides
+[dev]
+port = 8787

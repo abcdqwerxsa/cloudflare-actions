@@ -10,8 +10,11 @@
     "clean": "next clean"
   },
   "dependencies": {
+    "@cloudflare/containers": "^0.2.4",
+    "@cloudflare/next-on-pages": "^1.13.16",
     "@google/genai": "^1.17.0",
     "@hookform/resolvers": "^5.2.1",
+    "@opennextjs/cloudflare": "^1.18.1",
     "autoprefixer": "^10.4.21",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -21,7 +24,9 @@
     "postcss": "^8.5.6",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
-    "tailwind-merge": "^3.3.1"
+    "tailwind-merge": "^3.3.1",
+    "vercel": "^50.41.0",
+    "wrangler": "^4.81.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.1.11",
