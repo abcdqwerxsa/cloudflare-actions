@@ -1,7 +1,7 @@
 'use client';
 import { API_BASE } from '@/lib/api';
 import { useState, useEffect } from 'react';
-import { useParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -20,13 +20,13 @@ interface Execution {
 }
 
 export default function ExecutionDetailClient() {
-  const params = useParams();
-  const id = params.id as string;
+  const searchParams = useSearchParams();
+  const id = searchParams.get('id') || '';
   const router = useRouter();
   const [execution, setExecution] = useState<Execution | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { loadExecution(); }, [id]);
+  useEffect(() => { if (id) loadExecution(); else setLoading(false); }, [id]);
 
   const loadExecution = async () => {
     try {
@@ -41,7 +41,7 @@ export default function ExecutionDetailClient() {
     try {
       const res = await fetch(`${API_BASE}/tasks/${execution.task_id}/trigger`, { method: 'POST' });
       const data = await res.json();
-      if (data.executionId) router.push(`/executions/${data.executionId}`);
+      if (data.executionId) router.push(`/execution?id=${data.executionId}`);
     } catch {}
   };
 
@@ -70,7 +70,7 @@ export default function ExecutionDetailClient() {
         <div className="flex items-center justify-between">
           <h1 className="text-4xl font-headline font-bold text-on-surface tracking-tight">Execution <span className="text-primary opacity-50 font-mono text-lg">#{execution.id.slice(0, 8)}</span></h1>
           <div className="flex items-center gap-3">
-            <Link href={`/tasks/${execution.task_id}`} className="px-4 py-2 text-sm border border-outline-variant/30 text-on-surface hover:bg-surface-container-high rounded-lg transition-all">View Task</Link>
+            <Link href={`/task?id=${execution.task_id}`} className="px-4 py-2 text-sm border border-outline-variant/30 text-on-surface hover:bg-surface-container-high rounded-lg transition-all">View Task</Link>
             <button onClick={handleRerun} className="flex items-center gap-2 px-5 py-2 text-sm bg-primary text-on-primary font-bold rounded shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"><span className="material-symbols-outlined text-lg">replay</span>Re-run</button>
           </div>
         </div>
@@ -82,7 +82,7 @@ export default function ExecutionDetailClient() {
         <MetaCard label="Exit Code" value={<span className={`font-mono text-sm font-bold ${execution.exit_code === 0 ? 'text-primary' : execution.exit_code !== null ? 'text-error' : 'text-slate-500'}`}>{execution.exit_code !== null ? execution.exit_code : 'N/A'}</span>} />
       </div>
       <div className="grid grid-cols-3 gap-4 mb-8 text-sm">
-        <MetaCard label="Task" value={<Link href={`/tasks/${execution.task_id}`} className="text-primary hover:underline">{execution.task_name || execution.task_id.slice(0, 8)}</Link>} />
+        <MetaCard label="Task" value={<Link href={`/task?id=${execution.task_id}`} className="text-primary hover:underline">{execution.task_name || execution.task_id.slice(0, 8)}</Link>} />
         <MetaCard label="Started" value={<span className="text-slate-300">{formatTime(execution.started_at)}</span>} />
         <MetaCard label="Completed" value={<span className="text-slate-300">{formatTime(execution.completed_at)}</span>} />
       </div>

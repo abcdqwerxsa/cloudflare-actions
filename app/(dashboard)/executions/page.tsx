@@ -113,12 +113,12 @@ export default function Executions() {
                 executions.map((exec) => (
                   <tr key={exec.id} className="hover:bg-surface-container-high transition-colors group">
                     <td className="px-6 py-4">
-                      <Link href={`/executions/${exec.id}`} className="text-xs font-mono text-tertiary hover:text-primary transition-colors">
+                      <Link href={`/execution?id=${exec.id}`} className="text-xs font-mono text-tertiary hover:text-primary transition-colors">
                         {exec.id.slice(0, 8)}
                       </Link>
                     </td>
                     <td className="px-6 py-4">
-                      <Link href={`/tasks/${exec.task_id}`} className="text-sm text-on-surface hover:text-primary transition-colors">
+                      <Link href={`/task?id=${exec.task_id}`} className="text-sm text-on-surface hover:text-primary transition-colors">
                         {exec.task_name || exec.task_id.slice(0, 8)}
                       </Link>
                     </td>

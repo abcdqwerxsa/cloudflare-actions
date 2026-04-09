@@ -1,27 +1,30 @@
-// Task types
-export type TaskType = 'inline' | 'docker' | 'git';
+// Task status and execution types
 export type TaskStatus = 'idle' | 'active' | 'disabled';
 export type ExecutionStatus = 'pending' | 'running' | 'success' | 'failed' | 'timeout';
 export type TriggerType = 'manual' | 'scheduled';
-export type Runtime = 'python' | 'nodejs' | 'bash';
+
+export interface TaskFile {
+  id: string;
+  task_id: string;
+  file_path: string;
+  content: string;
+  is_entrypoint: number; // 0 or 1
+  created_at: string;
+  updated_at: string;
+}
 
 export interface Task {
   id: string;
   name: string;
   description: string;
-  type: TaskType;
   status: TaskStatus;
   schedule: string | null;
-  runtime: Runtime | null;
-  code: string;
-  docker_image: string | null;
-  command: string | null;
-  git_url: string | null;
-  git_branch: string;
-  git_command: string | null;
+  entrypoint: string;
   env_vars: string; // JSON string
   created_at: string;
   updated_at: string;
+  // Joined field (populated by API, not in DB)
+  files?: TaskFile[];
 }
 
 export interface Execution {
@@ -34,6 +37,8 @@ export interface Execution {
   exit_code: number | null;
   logs: string;
   created_at: string;
+  // Joined fields
+  task_name?: string;
 }
 
 export interface ApiKey {
@@ -48,24 +53,34 @@ export interface ApiKey {
 export interface Env {
   DB: D1Database;
   RUNNER_CONTAINER: DurableObjectNamespace;
+  ASSETS: Fetcher;
   API_KEY: string;
+  AUTH_PASSWORD: string;
+  AUTH_SECRET: string;
+  WORKER_API_URL: string;
+}
+
+export interface TaskFileInput {
+  file_path: string;
+  content: string;
+  is_entrypoint?: boolean;
 }
 
 export interface CreateTaskInput {
   name: string;
   description?: string;
-  type: TaskType;
   schedule?: string;
-  runtime?: Runtime;
-  code?: string;
-  docker_image?: string;
-  command?: string;
-  git_url?: string;
-  git_branch?: string;
-  git_command?: string;
+  entrypoint?: string;
   env_vars?: Record<string, string>;
+  files: TaskFileInput[];
 }
 
-export interface UpdateTaskInput extends Partial<CreateTaskInput> {
+export interface UpdateTaskInput {
+  name?: string;
+  description?: string;
   status?: TaskStatus;
+  schedule?: string | null;
+  entrypoint?: string;
+  env_vars?: Record<string, string> | string;
+  files?: TaskFileInput[];
 }

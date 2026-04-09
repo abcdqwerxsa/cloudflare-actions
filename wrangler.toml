@@ -4,6 +4,11 @@ main = "worker/index.ts"
 compatibility_date = "2025-06-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Static assets (Next.js export output)
+[assets]
+directory = "./out"
+binding = "ASSETS"
+
 # D1 Database
 [[d1_databases]]
 binding = "DB"
@@ -33,6 +38,9 @@ new_sqlite_classes = ["RunnerContainer"]
 # Environment variables
 [vars]
 API_KEY = "change-me-in-production"
+AUTH_PASSWORD = "change-me-in-production"
+AUTH_SECRET = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
+WORKER_API_URL = "https://cloudflare-actions.jeanpaul20020519.workers.dev"
 
 # Development overrides
 [dev]

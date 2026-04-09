@@ -37,15 +37,6 @@ export default function Sidebar() {
       </nav>
 
       <div className="p-4 border-t border-teal-900/10 mt-auto">
-        <div className="flex items-center gap-3 px-4 py-2 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer">
-          <span className="material-symbols-outlined">menu_book</span>
-          <span className="text-sm font-medium">Docs</span>
-        </div>
-        <div className="flex items-center gap-3 px-4 py-2 text-slate-400 hover:text-slate-200 transition-colors cursor-pointer">
-          <span className="material-symbols-outlined">help_outline</span>
-          <span className="text-sm font-medium">Help</span>
-        </div>
-        
         <div className="mt-6 flex items-center gap-3 px-4 py-3 bg-surface-container-low rounded-xl border border-teal-900/20">
           <div className="w-8 h-8 rounded-full bg-surface-container-highest overflow-hidden flex items-center justify-center text-primary font-bold">
             A
@@ -55,6 +46,13 @@ export default function Sidebar() {
             <p className="text-[10px] text-slate-500 truncate mt-1">Node-01-Global</p>
           </div>
         </div>
+        <button
+          onClick={async () => { await fetch('/api/auth/logout', { method: 'POST' }); window.location.href = '/'; }}
+          className="mt-3 w-full flex items-center gap-3 px-4 py-2.5 text-slate-400 hover:text-error hover:bg-error/5 rounded-lg transition-colors"
+        >
+          <span className="material-symbols-outlined">logout</span>
+          <span className="text-sm font-medium">Sign Out</span>
+        </button>
       </div>
     </aside>
   );

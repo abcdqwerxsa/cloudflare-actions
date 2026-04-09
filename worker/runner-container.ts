@@ -1,9 +1,15 @@
 import { Container } from '@cloudflare/containers';
-import type { Env, Task, Execution } from './types';
+import type { Env, Task, TaskFile, Execution } from './types';
 
 export class RunnerContainer extends Container<Env> {
-  override sleepAfter = '5 minutes';
+  override sleepAfter = '5m';
   override envVars = {};
+
+  private lastExitCode: number = 0;
+
+  override onStop(params: { exitCode?: number; reason?: string }) {
+    this.lastExitCode = params.exitCode ?? 1;
+  }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -23,38 +29,55 @@ export class RunnerContainer extends Container<Env> {
   }
 
   private async runTask(taskId: string, executionId: string): Promise<void> {
-    // Fetch task definition from D1
     const task = await this.getTask(taskId);
     if (!task) {
       await this.updateExecution(executionId, { status: 'failed', logs: 'Task not found' });
       return;
     }
 
-    // Update execution status to running
     await this.updateExecution(executionId, {
       status: 'running',
       started_at: new Date().toISOString(),
     });
 
     try {
-      // Build and execute the task command
-      const { image, command, envVars } = this.buildTaskConfig(task);
+      const { command, envVars } = await this.buildTaskConfig(taskId, executionId);
 
-      // Start the container with the task configuration
       await this.start({
-        image,
         envVars,
         entrypoint: ['/bin/sh', '-c', command],
       });
 
-      // Wait for completion with a timeout
-      const result = await this.waitForCompletion(executionId, task);
+      // Wait for container to exit or timeout (5 minutes)
+      const timeoutMs = 300000;
+      const timeoutPromise = new Promise<{ exitCode: number }>((resolve) => {
+        setTimeout(() => {
+          resolve({ exitCode: 124 });
+        }, timeoutMs);
+      });
+
+      const result = await Promise.race([
+        this.waitForContainerExit(),
+        timeoutPromise,
+      ]);
+
+      if (result.exitCode === 124) {
+        try { await this.stop(); } catch {}
+      }
+
+      // Wait briefly for the container's curl to finish posting logs
+      await new Promise(r => setTimeout(r, 2000));
+
+      // Read logs from D1 (posted by container via curl)
+      const exec = await this.env.DB.prepare(
+        'SELECT logs FROM executions WHERE id = ?'
+      ).bind(executionId).first();
 
       await this.updateExecution(executionId, {
-        status: result.exitCode === 0 ? 'success' : 'failed',
+        status: result.exitCode === 0 ? 'success' : (result.exitCode === 124 ? 'timeout' : 'failed'),
         exit_code: result.exitCode,
         completed_at: new Date().toISOString(),
-        logs: result.logs,
+        logs: (exec as any)?.logs || `Process exited with code ${result.exitCode}`,
       });
     } catch (err: any) {
       await this.updateExecution(executionId, {
@@ -63,94 +86,99 @@ export class RunnerContainer extends Container<Env> {
         completed_at: new Date().toISOString(),
         logs: err.message,
       });
+    } finally {
+      try { await this.stop(); } catch {}
     }
   }
 
-  private buildTaskConfig(task: Task): {
-    image: string;
-    command: string;
-    envVars: Record<string, string>;
-  } {
-    // Parse env vars from JSON
-    let envVars: Record<string, string> = {};
+  private async waitForContainerExit(): Promise<{ exitCode: number }> {
     try {
-      if (task.env_vars) {
-        envVars = JSON.parse(task.env_vars);
+      await this.ctx.container.monitor();
+    } catch (err: any) {
+      // Container errored — still check state below
+    }
+
+    const exitCode = this.lastExitCode;
+
+    try {
+      const state = this.getState();
+      if (state.exitCode !== undefined) {
+        return { exitCode: state.exitCode };
       }
     } catch {}
 
-    switch (task.type) {
-      case 'inline': {
-        const image = this.selectRuntimeImage(task.runtime || 'bash');
-        const ext = task.runtime === 'python' ? 'py' : task.runtime === 'nodejs' ? 'js' : 'sh';
-        const runner = task.runtime === 'python' ? 'python3' : task.runtime === 'nodejs' ? 'node' : '/bin/sh';
-        const command = `cat > /tmp/task.${ext} << 'SCRIPT_EOF'\n${task.code}\nSCRIPT_EOF\n${runner} /tmp/task.${ext}`;
-        return { image, command, envVars };
-      }
-      case 'docker': {
-        const image = task.docker_image || 'alpine:latest';
-        const command = task.command || 'echo "No command specified"';
-        return { image, command, envVars };
-      }
-      case 'git': {
-        const branch = task.git_branch || 'main';
-        const gitCommand = task.git_command || 'echo "No command specified"';
-        const command = [
-          'apk add --no-cache git',
-          `git clone --branch ${branch} --depth 1 ${task.git_url} /tmp/repo`,
-          'cd /tmp/repo',
-          gitCommand,
-        ].join(' && ');
-        return { image: 'alpine/git:latest', command, envVars };
-      }
-      default:
-        return { image: 'alpine:latest', command: 'echo "Unknown task type"', envVars };
-    }
+    return { exitCode };
   }
 
-  private selectRuntimeImage(runtime: string): string {
-    switch (runtime) {
-      case 'python':
-        return 'python:3.12-slim';
-      case 'nodejs':
-        return 'node:22-slim';
-      case 'bash':
-      default:
-        return 'alpine:latest';
-    }
-  }
+  private async buildTaskConfig(taskId: string, executionId: string): Promise<{
+    command: string;
+    envVars: Record<string, string>;
+  }> {
+    const task = await this.getTask(taskId);
+    if (!task) throw new Error('Task not found');
 
-  private async waitForCompletion(
-    executionId: string,
-    task: Task,
-  ): Promise<{ exitCode: number; logs: string }> {
-    // For now, we poll the container and capture output
-    // In a real implementation, we'd stream stdout/stderr
-    const timeout = 300000; // 5 minute timeout
-    const startTime = Date.now();
-
-    // Try to read from the container's stdout
-    let logs = '';
-    let exitCode = 0;
-
+    let envVars: Record<string, string> = {};
     try {
-      // The container runs the command and we check its state
-      // This is a simplified version - in production we'd use proper streaming
-      const response = await fetch(`http://localhost:8080/status`);
-      if (response.ok) {
-        const data = await response.json() as any;
-        exitCode = data.exitCode ?? 0;
-        logs = data.logs ?? '';
-      }
-    } catch {
-      // Container might still be running
-      if (Date.now() - startTime > timeout) {
-        await this.updateExecution(executionId, { status: 'timeout' });
-        return { exitCode: 124, logs: 'Execution timed out after 5 minutes' };
-      }
+      if (task.env_vars) envVars = JSON.parse(task.env_vars);
+    } catch {}
+
+    // Add internal vars for log reporting
+    envVars.CF_EXECUTION_ID = executionId;
+    envVars.CF_API_URL = this.env.WORKER_API_URL || 'https://cloudflare-actions.jeanpaul20020519.workers.dev';
+
+    // Fetch all files for this task
+    const { results: files } = await this.env.DB.prepare(
+      'SELECT * FROM task_files WHERE task_id = ? ORDER BY file_path'
+    ).bind(taskId).all();
+
+    if (!files || files.length === 0) {
+      throw new Error('No files found for task');
     }
 
-    return { exitCode, logs };
+    const taskFiles = files as TaskFile[];
+    const entrypoint = task.entrypoint || 'run.sh';
+    const workspace = '/tmp/workspace';
+
+    const scriptParts: string[] = [];
+    scriptParts.push(`mkdir -p ${workspace}`);
+    scriptParts.push(`cd ${workspace}`);
+
+    // Write each file using heredoc with unique delimiter
+    for (const file of taskFiles) {
+      const filePath = `${workspace}/${file.file_path}`;
+      const lastSlash = filePath.lastIndexOf('/');
+      if (lastSlash > 0) {
+        const dir = filePath.substring(0, lastSlash);
+        scriptParts.push(`mkdir -p '${dir}'`);
+      }
+      // UUID-based delimiter to avoid collision with file content
+      const delimiter = `CF_EOF_${file.id.replace(/-/g, '_')}`;
+      scriptParts.push(`cat > '${filePath}' << '${delimiter}'
+${file.content}
+${delimiter}`);
+    }
+
+    // Make entrypoint executable
+    scriptParts.push(`chmod +x '${workspace}/${entrypoint}'`);
+
+    // Helper: post current log file to backend
+    scriptParts.push(`_post_logs() { cat /tmp/output.log 2>/dev/null | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' | { read j; curl -sf -X PUT "$CF_API_URL/executions/$CF_EXECUTION_ID/logs" -H "Content-Type: application/json" -d "$(printf '{"logs":%s}' "$j")"; } || true; }`);
+
+    // Run entrypoint with output tee'd to log file
+    scriptParts.push(`/bin/bash '${workspace}/${entrypoint}' > /tmp/output.log 2>&1 &`);
+    scriptParts.push(`CMD_PID=$!`);
+
+    // Background: stream logs every 2 seconds while command runs
+    scriptParts.push(`(while kill -0 $CMD_PID 2>/dev/null; do sleep 2; _post_logs; done; sleep 1; _post_logs) &`);
+
+    // Wait for command to finish
+    scriptParts.push(`wait $CMD_PID`);
+    scriptParts.push(`exit_code=$?`);
+    scriptParts.push(`wait`);
+    scriptParts.push(`exit $exit_code`);
+
+    const command = scriptParts.join('\n');
+    return { command, envVars };
   }
 
   private async getTask(taskId: string): Promise<Task | null> {

@@ -1,5 +1,5 @@
 import { dispatchTask } from './cron-handler';
-import type { Env, Task, Execution, CreateTaskInput, UpdateTaskInput } from './types';
+import type { Env, Task, TaskFile, Execution, CreateTaskInput, UpdateTaskInput, TaskFileInput } from './types';
 
 function json(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -12,9 +12,8 @@ function error(message: string, status = 400) {
   return json({ error: message }, status);
 }
 
-export async function handleApi(request: Request, env: Env): Promise<Response> {
+export async function handleApi(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
-  // Path is already normalized by index.ts (stripped /api prefix)
   const path = url.pathname.startsWith('/api/') ? url.pathname.slice(5) : url.pathname.slice(1);
   const method = request.method;
 
@@ -34,7 +33,6 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (path === 'tasks' && method === 'GET') return await listTasks(env, url);
     if (path === 'tasks' && method === 'POST') return await createTask(request, env);
 
-    // Task by ID: tasks/xxx
     const taskMatch = path.match(/^tasks\/([a-f0-9-]+)$/);
     if (taskMatch) {
       const taskId = taskMatch[1];
@@ -43,10 +41,10 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       if (method === 'DELETE') return await deleteTask(env, taskId);
     }
 
-    // Task trigger: tasks/xxx/trigger
+    // Task trigger
     const triggerMatch = path.match(/^tasks\/([a-f0-9-]+)\/trigger$/);
     if (triggerMatch && method === 'POST') {
-      return await triggerTask(env, triggerMatch[1]);
+      return await triggerTask(env, triggerMatch[1], ctx);
     }
 
     // Executions
@@ -55,6 +53,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     const execMatch = path.match(/^executions\/([a-f0-9-]+)$/);
     if (execMatch && method === 'GET') {
       return await getExecution(env, execMatch[1]);
+    }
+
+    // Internal: container reports logs
+    const execLogsMatch = path.match(/^executions\/([a-f0-9-]+)\/logs$/);
+    if (execLogsMatch && method === 'PUT') {
+      return await updateExecutionLogs(request, env, execLogsMatch[1]);
     }
 
     // API Keys
@@ -89,43 +93,60 @@ async function listTasks(env: Env, url: URL) {
 
 async function createTask(request: Request, env: Env) {
   const body = await request.json() as CreateTaskInput;
-  if (!body.name || !body.type) return error('name and type are required');
+  if (!body.name) return error('name is required');
+  if (!body.files || body.files.length === 0) return error('at least one file is required');
 
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
+  const entrypoint = body.entrypoint || 'run.sh';
 
-  await env.DB.prepare(
-    `INSERT INTO tasks (id, name, description, type, status, schedule, runtime, code, docker_image, command, git_url, git_branch, git_command, env_vars, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(
-    id, body.name, body.description || '', body.type,
-    body.schedule || null, body.runtime || null, body.code || '',
-    body.docker_image || null, body.command || null,
-    body.git_url || null, body.git_branch || 'main', body.git_command || null,
-    body.env_vars ? JSON.stringify(body.env_vars) : '{}',
-    now, now
-  ).run();
+  const hasEntrypoint = body.files.some(f => f.file_path === entrypoint);
+  if (!hasEntrypoint) return error(`entrypoint file "${entrypoint}" not found in files`);
 
-  const task = await env.DB.prepare('SELECT * FROM tasks WHERE id = ?').bind(id).first();
-  return json({ task }, 201);
+  // Batch insert task + files
+  const stmts: D1PreparedStatement[] = [
+    env.DB.prepare(
+      `INSERT INTO tasks (id, name, description, status, schedule, entrypoint, env_vars, created_at, updated_at)
+       VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)`
+    ).bind(id, body.name, body.description || '', body.schedule || null,
+      entrypoint, body.env_vars ? JSON.stringify(body.env_vars) : '{}', now, now),
+  ];
+
+  for (const file of body.files) {
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO task_files (id, task_id, file_path, content, is_entrypoint, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(crypto.randomUUID(), id, file.file_path, file.content,
+        file.file_path === entrypoint ? 1 : 0, now, now)
+    );
+  }
+
+  await env.DB.batch(stmts);
+
+  return await getTask(env, id);
 }
 
 async function getTask(env: Env, taskId: string) {
-  const task = await env.DB.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
+  const [task, { results: files }] = await Promise.all([
+    env.DB.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first(),
+    env.DB.prepare('SELECT * FROM task_files WHERE task_id = ? ORDER BY file_path').bind(taskId).all(),
+  ]);
   if (!task) return error('Task not found', 404);
-  return json({ task });
+  return json({ task: { ...task, files } }, 200);
 }
 
 async function updateTask(request: Request, env: Env, taskId: string) {
   const body = await request.json() as UpdateTaskInput;
+  const task = await env.DB.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
+  if (!task) return error('Task not found', 404);
+
   const sets: string[] = [];
   const values: any[] = [];
 
   const fields: Record<string, any> = {
     name: body.name, description: body.description, status: body.status,
-    schedule: body.schedule, runtime: body.runtime, code: body.code,
-    docker_image: body.docker_image, command: body.command,
-    git_url: body.git_url, git_branch: body.git_branch, git_command: body.git_command,
+    schedule: body.schedule, entrypoint: body.entrypoint,
   };
 
   for (const [key, val] of Object.entries(fields)) {
@@ -137,29 +158,45 @@ async function updateTask(request: Request, env: Env, taskId: string) {
     values.push(typeof body.env_vars === 'string' ? body.env_vars : JSON.stringify(body.env_vars));
   }
 
-  if (sets.length === 0) return error('No fields to update');
+  if (sets.length > 0) {
+    sets.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(taskId);
+    await env.DB.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).bind(...values).run();
+  }
 
-  sets.push('updated_at = ?');
-  values.push(new Date().toISOString());
-  values.push(taskId);
+  // Replace all files if provided
+  if (body.files && body.files.length > 0) {
+    const now = new Date().toISOString();
+    const entrypoint = body.entrypoint || (task as any).entrypoint || 'run.sh';
+    const delStmt = env.DB.prepare('DELETE FROM task_files WHERE task_id = ?').bind(taskId);
+    const insertStmts = body.files.map(file =>
+      env.DB.prepare(
+        `INSERT INTO task_files (id, task_id, file_path, content, is_entrypoint, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(crypto.randomUUID(), taskId, file.file_path, file.content,
+        file.file_path === entrypoint ? 1 : 0, now, now)
+    );
+    await env.DB.batch([delStmt, ...insertStmts]);
+  }
 
-  await env.DB.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).bind(...values).run();
-
-  const task = await env.DB.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
-  return json({ task });
+  return await getTask(env, taskId);
 }
 
 async function deleteTask(env: Env, taskId: string) {
-  await env.DB.prepare('DELETE FROM executions WHERE task_id = ?').bind(taskId).run();
-  await env.DB.prepare('DELETE FROM tasks WHERE id = ?').bind(taskId).run();
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM executions WHERE task_id = ?').bind(taskId),
+    env.DB.prepare('DELETE FROM task_files WHERE task_id = ?').bind(taskId),
+    env.DB.prepare('DELETE FROM tasks WHERE id = ?').bind(taskId),
+  ]);
   return json({ success: true });
 }
 
-async function triggerTask(env: Env, taskId: string) {
+async function triggerTask(env: Env, taskId: string, ctx: ExecutionContext) {
   const task = await env.DB.prepare('SELECT * FROM tasks WHERE id = ?').bind(taskId).first();
   if (!task) return error('Task not found', 404);
 
-  const executionId = await dispatchTask(env, taskId, 'manual');
+  const executionId = await dispatchTask(env, taskId, 'manual', ctx);
   return json({ executionId });
 }
 
@@ -170,7 +207,7 @@ async function listExecutions(env: Env, url: URL) {
   const status = url.searchParams.get('status');
   const limit = parseInt(url.searchParams.get('limit') || '50');
 
-  let query = 'SELECT e.*, t.name as task_name, t.type as task_type FROM executions e LEFT JOIN tasks t ON e.task_id = t.id';
+  let query = 'SELECT e.*, t.name as task_name FROM executions e LEFT JOIN tasks t ON e.task_id = t.id';
   const conditions: string[] = [];
   const binds: any[] = [];
 
@@ -187,7 +224,7 @@ async function listExecutions(env: Env, url: URL) {
 
 async function getExecution(env: Env, executionId: string) {
   const exec = await env.DB.prepare(
-    'SELECT e.*, t.name as task_name, t.type as task_type FROM executions e LEFT JOIN tasks t ON e.task_id = t.id WHERE e.id = ?'
+    'SELECT e.*, t.name as task_name FROM executions e LEFT JOIN tasks t ON e.task_id = t.id WHERE e.id = ?'
   ).bind(executionId).first();
   if (!exec) return error('Execution not found', 404);
   return json({ execution: exec });
@@ -210,7 +247,6 @@ async function createKey(request: Request, env: Env) {
   const rawKey = `cf_${crypto.randomUUID().replace(/-/g, '')}`;
   const keyPrefix = rawKey.slice(0, 8);
 
-  // Hash the key using SHA-256
   const encoder = new TextEncoder();
   const data = encoder.encode(rawKey);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -225,5 +261,23 @@ async function createKey(request: Request, env: Env) {
 
 async function deleteKey(env: Env, keyId: string) {
   await env.DB.prepare('DELETE FROM api_keys WHERE id = ?').bind(keyId).run();
+  return json({ success: true });
+}
+
+// --- Internal: Log reporting from containers ---
+
+async function updateExecutionLogs(request: Request, env: Env, executionId: string) {
+  let body: any;
+  try {
+    body = await request.json();
+  } catch {
+    return error('Invalid JSON', 400);
+  }
+  if (typeof body.logs !== 'string') return error('logs must be a string');
+
+  await env.DB.prepare(
+    'UPDATE executions SET logs = ? WHERE id = ?'
+  ).bind(body.logs, executionId).run();
+
   return json({ success: true });
 }

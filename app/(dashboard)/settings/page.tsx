@@ -173,6 +173,112 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* API Documentation */}
+      <div className="bg-surface-container-low rounded-xl border border-teal-900/10 overflow-hidden mb-8">
+        <div className="p-6 border-b border-teal-900/10">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-headline font-bold text-primary uppercase tracking-widest flex items-center gap-2">
+                <span className="material-symbols-outlined text-lg">code</span>
+                API Documentation
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">Use these endpoints to integrate with your CI/CD pipeline or external tools.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-5 text-sm">
+          {/* Authentication */}
+          <div>
+            <h4 className="text-on-surface font-bold mb-2">Authentication</h4>
+            <p className="text-slate-400 mb-2">Include your API key in the <code className="text-primary bg-primary/10 px-1.5 py-0.5 rounded text-xs">x-api-key</code> header for all write operations (POST, PUT, DELETE). GET requests do not require authentication.</p>
+            <div className="bg-surface-container-lowest rounded-lg p-3 font-mono text-xs text-slate-300 overflow-x-auto">
+              <div className="text-slate-500"># Example: trigger a task via curl</div>
+              <div>curl -X POST {''}</div>
+              <div className="pl-4">-H &quot;x-api-key: cf_your_api_key_here&quot; {''}</div>
+              <div className="pl-4">https://your-worker.workers.dev/api/tasks/{'{task_id}'}/trigger</div>
+            </div>
+          </div>
+
+          {/* Endpoints */}
+          <div>
+            <h4 className="text-on-surface font-bold mb-3">Endpoints</h4>
+            <div className="space-y-3">
+              {[
+                { method: 'GET', path: '/api/tasks', desc: 'List all tasks', params: '?status=active (optional)', body: null, resp: '{ "tasks": [...] }' },
+                { method: 'POST', path: '/api/tasks', desc: 'Create a task', params: null, body: '{\n  "name": "My Task",\n  "description": "Optional",\n  "schedule": "*/5 * * * *",  // optional cron\n  "entrypoint": "run.sh",\n  "env_vars": { "KEY": "value" },\n  "files": [\n    { "file_path": "run.sh", "content": "#!/bin/bash\necho hello", "is_entrypoint": true }\n  ]\n}', resp: '{ "task": { "id": "...", ... } }' },
+                { method: 'GET', path: '/api/tasks/:id', desc: 'Get task details (includes files)', params: null, body: null, resp: '{ "task": { ..., "files": [...] } }' },
+                { method: 'PUT', path: '/api/tasks/:id', desc: 'Update a task', params: null, body: '{\n  "name": "Updated",\n  "status": "active|idle|disabled",\n  "schedule": "0 * * * *",\n  "env_vars": { "KEY": "value" },\n  "files": [...]  // replaces all files\n}', resp: '{ "task": { ... } }' },
+                { method: 'DELETE', path: '/api/tasks/:id', desc: 'Delete a task and its executions', params: null, body: null, resp: '{ "success": true }' },
+                { method: 'POST', path: '/api/tasks/:id/trigger', desc: 'Manually trigger a task execution', params: null, body: null, resp: '{ "executionId": "uuid" }' },
+                { method: 'GET', path: '/api/executions', desc: 'List executions', params: '?task_id=uuid&status=running&limit=50', body: null, resp: '{ "executions": [...] }' },
+                { method: 'GET', path: '/api/executions/:id', desc: 'Get execution details with logs', params: null, body: null, resp: '{ "execution": { ..., "logs": "..." } }' },
+                { method: 'GET', path: '/api/keys', desc: 'List API keys (prefixes only)', params: null, body: null, resp: '{ "keys": [...] }' },
+                { method: 'POST', path: '/api/keys', desc: 'Create a new API key', params: null, body: '{ "name": "CI/CD Pipeline" }', resp: '{ "key": "cf_...", "id": "...", "name": "..." }' },
+                { method: 'DELETE', path: '/api/keys/:id', desc: 'Delete an API key', params: null, body: null, resp: '{ "success": true }' },
+              ].map((ep, i) => (
+                <div key={i} className="bg-surface-container-lowest rounded-lg overflow-hidden">
+                  <div className="flex items-center gap-3 px-4 py-2.5 border-b border-outline-variant/10">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      ep.method === 'GET' ? 'bg-emerald-500/15 text-emerald-400' :
+                      ep.method === 'POST' ? 'bg-blue-500/15 text-blue-400' :
+                      ep.method === 'PUT' ? 'bg-amber-500/15 text-amber-400' :
+                      'bg-red-500/15 text-red-400'
+                    }`}>{ep.method}</span>
+                    <code className="text-on-surface font-mono text-xs">{ep.path}</code>
+                    <span className="text-slate-500 text-xs ml-auto">{ep.desc}</span>
+                  </div>
+                  {(ep.params || ep.body || ep.resp) && (
+                    <div className="px-4 py-3 space-y-2">
+                      {ep.params && (
+                        <div>
+                          <span className="text-[10px] text-slate-500 uppercase tracking-wider">Params:</span>
+                          <code className="text-xs text-slate-300 ml-2">{ep.params}</code>
+                        </div>
+                      )}
+                      {ep.body && (
+                        <div>
+                          <span className="text-[10px] text-slate-500 uppercase tracking-wider">Body:</span>
+                          <pre className="text-xs text-slate-300 mt-1 bg-surface-container-low rounded p-2 overflow-x-auto">{ep.body}</pre>
+                        </div>
+                      )}
+                      {ep.resp && (
+                        <div>
+                          <span className="text-[10px] text-slate-500 uppercase tracking-wider">Response:</span>
+                          <code className="text-xs text-slate-300 ml-2">{ep.resp}</code>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* CI/CD Example */}
+          <div>
+            <h4 className="text-on-surface font-bold mb-2">CI/CD Example (GitHub Actions)</h4>
+            <div className="bg-surface-container-lowest rounded-lg p-3 font-mono text-xs text-slate-300 overflow-x-auto whitespace-pre">{`# .github/workflows/deploy.yml
+name: Trigger Task
+on:
+  push:
+    branches: [main]
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Cloudflare Action
+        run: |
+          RESPONSE=$(curl -s -X POST \\
+            -H "x-api-key: \${{ secrets.CF_API_KEY }}" \\
+            "\${{ vars.CF_API_URL }}/api/tasks/\${{ vars.TASK_ID }}/trigger")
+          EXECUTION_ID=$(echo $RESPONSE | jq -r '.executionId')
+          echo "Execution: $EXECUTION_ID"`}</div>
+          </div>
+        </div>
+      </div>
+
       {/* System Info */}
       <div className="bg-surface-container-low rounded-xl border border-teal-900/10 p-6">
         <h3 className="text-sm font-headline font-bold text-primary uppercase tracking-widest flex items-center gap-2 mb-4">

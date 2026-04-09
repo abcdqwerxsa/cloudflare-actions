@@ -131,7 +131,7 @@ export default function Dashboard() {
               <p className="text-slate-500 text-sm text-center">No recent activity</p>
             ) : (
               executions.map((exec) => (
-                <Link key={exec.id} href={`/executions/${exec.id}`} className="block">
+                <Link key={exec.id} href={`/execution?id=${exec.id}`} className="block">
                   <ActivityItem
                     id={exec.id.slice(0, 8)}
                     name={exec.task_name || exec.task_id.slice(0, 8)}

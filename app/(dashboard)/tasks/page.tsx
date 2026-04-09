@@ -7,9 +7,9 @@ import { useRouter } from 'next/navigation';
 interface Task {
   id: string;
   name: string;
-  type: string;
   status: string;
   schedule: string | null;
+  entrypoint: string;
   updated_at: string;
 }
 
@@ -41,7 +41,7 @@ export default function Tasks() {
       const res = await fetch(`${API_BASE}/tasks/${taskId}/trigger`, { method: 'POST' });
       const data = await res.json();
       if (data.executionId) {
-        router.push(`/executions/${data.executionId}`);
+        router.push(`/execution?id=${data.executionId}`);
       }
     } catch (err) {
       console.error('Failed to trigger task:', err);
@@ -99,7 +99,6 @@ export default function Tasks() {
             <thead>
               <tr className="bg-surface-container-high/50 text-[10px] uppercase tracking-widest text-slate-500 font-bold">
                 <th className="px-6 py-4">Task Name</th>
-                <th className="px-6 py-4">Type</th>
                 <th className="px-6 py-4">Status</th>
                 <th className="px-6 py-4">Schedule</th>
                 <th className="px-6 py-4">Last Updated</th>
@@ -109,14 +108,14 @@ export default function Tasks() {
             <tbody className="divide-y divide-teal-900/5">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
                     <span className="material-symbols-outlined text-4xl mb-4 opacity-50 animate-pulse">loading</span>
                     <p>Loading tasks...</p>
                   </td>
                 </tr>
               ) : tasks.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
                     <span className="material-symbols-outlined text-4xl mb-4 opacity-50">terminal</span>
                     <p>No tasks yet. Create your first task to get started.</p>
                   </td>
@@ -128,13 +127,10 @@ export default function Tasks() {
                       <div className="flex items-center gap-3">
                         <div className={`w-1.5 h-8 rounded-full ${task.status === 'active' ? 'bg-primary' : task.status === 'disabled' ? 'bg-slate-700' : 'bg-primary/40'}`}></div>
                         <div>
-                          <Link href={`/tasks/${task.id}`} className="text-sm font-bold text-on-surface leading-none hover:text-primary transition-colors">{task.name}</Link>
+                          <Link href={`/task?id=${task.id}`} className="text-sm font-bold text-on-surface leading-none hover:text-primary transition-colors">{task.name}</Link>
                           <p className="text-[10px] text-slate-500 mt-1">{task.id.slice(0, 8)}</p>
                         </div>
                       </div>
-                    </td>
-                    <td className="px-6 py-5">
-                      <span className="text-xs px-2 py-1 rounded bg-tertiary/10 text-tertiary border border-tertiary/20 capitalize">{task.type}</span>
                     </td>
                     <td className="px-6 py-5">
                       <StatusBadge status={task.status} />
@@ -152,7 +148,7 @@ export default function Tasks() {
                         <button onClick={(e) => handleRun(task.id, e)} className="p-2 text-slate-400 hover:text-primary transition-colors" title="Run Now">
                           <span className="material-symbols-outlined text-xl">play_arrow</span>
                         </button>
-                        <Link href={`/tasks/${task.id}`} className="p-2 text-slate-400 hover:text-tertiary transition-colors" title="Edit">
+                        <Link href={`/task?id=${task.id}`} className="p-2 text-slate-400 hover:text-tertiary transition-colors" title="Edit">
                           <span className="material-symbols-outlined text-xl">edit</span>
                         </Link>
                         <button onClick={(e) => handleDelete(task.id, e)} className="p-2 text-slate-400 hover:text-error transition-colors" title="Delete">

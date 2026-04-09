@@ -1,2 +1,3 @@
-// Backend Worker URL - all API calls go through this
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://cloudflare-actions.jeanpaul20020519.workers.dev';
+// Use same-origin /api proxy instead of cross-origin worker URL
+// This eliminates DNS lookup, TLS handshake, and CORS overhead
+export const API_BASE = '/api';

@@ -59,7 +59,7 @@ function matchesField(field: string, value: number, min: number, max: number): b
   return !isNaN(num) && value === num;
 }
 
-export async function handleCron(env: Env): Promise<void> {
+export async function handleCron(env: Env, ctx: ExecutionContext): Promise<void> {
   const now = new Date();
 
   // Get all active tasks with schedules
@@ -76,7 +76,7 @@ export async function handleCron(env: Env): Promise<void> {
 
     try {
       if (matchesCron(task.schedule, now)) {
-        await dispatchTask(env, task.id, 'scheduled');
+        await dispatchTask(env, task.id, 'scheduled', ctx);
       }
     } catch (err) {
       console.error(`Failed to evaluate cron for task ${task.id}:`, err);
@@ -88,6 +88,7 @@ export async function dispatchTask(
   env: Env,
   taskId: string,
   triggerType: 'manual' | 'scheduled',
+  ctx?: ExecutionContext,
 ): Promise<string> {
   // Generate execution ID
   const executionId = crypto.randomUUID();
@@ -103,16 +104,27 @@ export async function dispatchTask(
   const id = env.RUNNER_CONTAINER.idFromName(executionId);
   const stub = env.RUNNER_CONTAINER.get(id);
 
-  // Trigger the container asynchronously via fetch
-  // Use waitUntil pattern to not block the response
+  // Trigger the container via fetch
   const url = new URL('http://internal/run');
   url.searchParams.set('executionId', executionId);
   url.searchParams.set('taskId', taskId);
 
-  // Fire and forget - the DO handles the lifecycle
-  stub.fetch(new Request(url.toString(), { method: 'POST' })).catch((err: any) => {
-    console.error(`Container execution failed for ${executionId}:`, err);
-  });
+  const containerPromise = stub.fetch(new Request(url.toString(), { method: 'POST' }));
+
+  if (ctx) {
+    // Use waitUntil to ensure the DO receives the request
+    ctx.waitUntil(
+      containerPromise.catch((err: any) => {
+        console.error(`Container execution failed for ${executionId}:`, err);
+      }),
+    );
+  } else {
+    try {
+      await containerPromise;
+    } catch (err: any) {
+      console.error(`Container execution failed for ${executionId}:`, err);
+    }
+  }
 
   return executionId;
 }
