@@ -7,15 +7,24 @@ export { RunnerContainer };
 
 const AUTH_COOKIE = '__auth_token';
 const AUTH_MAX_AGE = 86400;
+const INTERNAL_LOG_HEADER = 'x-internal-log-token';
 
-async function computeAuthToken(env: Env): Promise<string> {
+async function computeHmac(secret: string, value: string): Promise<string> {
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
-    'raw', enc.encode(env.AUTH_SECRET || 'default-secret'),
+    'raw', enc.encode(secret || 'default-secret'),
     { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
   );
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(env.AUTH_PASSWORD || ''));
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(value));
   return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function computeAuthToken(env: Env): Promise<string> {
+  return computeHmac(env.AUTH_SECRET || 'default-secret', env.AUTH_PASSWORD || '');
+}
+
+async function computeInternalLogToken(env: Env, executionId: string): Promise<string> {
+  return computeHmac(env.AUTH_SECRET || 'default-secret', `execution-logs:${executionId}`);
 }
 
 function getCookieValue(cookieHeader: string | null, name: string): string | null {
@@ -45,6 +54,12 @@ async function validateApiKey(env: Env, apiKey: string): Promise<boolean> {
     return true;
   }
   return false;
+}
+
+async function validateInternalLogToken(request: Request, env: Env, executionId: string): Promise<boolean> {
+  const token = request.headers.get(INTERNAL_LOG_HEADER);
+  if (!token) return false;
+  return token === await computeInternalLogToken(env, executionId);
 }
 
 export default {
@@ -115,8 +130,16 @@ export default {
       }
 
       // Container log reporting (internal, no auth)
-      const execLogsMatch = url.pathname.match(/^executions\/([a-f0-9-]+)\/logs$/);
+      const execLogsMatch = url.pathname.match(/^\/executions\/([a-f0-9-]+)\/logs$/);
       if (execLogsMatch && request.method === 'PUT') {
+        const executionId = execLogsMatch[1];
+        const validInternalToken = await validateInternalLogToken(request, env, executionId);
+        if (!validInternalToken) {
+          return new Response(JSON.stringify({ error: 'Invalid internal log token' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
         return handleApi(request, env, ctx);
       }
 

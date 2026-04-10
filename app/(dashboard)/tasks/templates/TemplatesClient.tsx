@@ -557,11 +557,11 @@ export default function TemplatesClient({ templates }: TemplatesClientProps) {
                 ))}
               </div>
 
-              <div className="mt-6 flex items-center justify-between gap-4 border-t border-outline-variant/10 pt-5">
-                <div className="text-xs text-slate-500">
+              <div className="mt-6 flex flex-col gap-4 border-t border-outline-variant/10 pt-5 md:flex-row md:items-start md:justify-between">
+                <div className="min-w-0 text-xs text-slate-500">
                   Slug: <code className="font-mono text-slate-400">{template.slug}</code>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3 md:justify-end">
                   {template.source === 'built-in' && (
                     <button
                       onClick={() => handleSaveCopy(template.slug)}

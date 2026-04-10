@@ -11,6 +11,19 @@ export class RunnerContainer extends Container<Env> {
     this.lastExitCode = params.exitCode ?? 1;
   }
 
+  private async computeInternalLogToken(executionId: string): Promise<string> {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      enc.encode(this.env.AUTH_SECRET || 'default-secret'),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(`execution-logs:${executionId}`));
+    return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const executionId = url.searchParams.get('executionId');
@@ -65,19 +78,13 @@ export class RunnerContainer extends Container<Env> {
         try { await this.stop(); } catch {}
       }
 
-      // Wait briefly for the container's curl to finish posting logs
-      await new Promise(r => setTimeout(r, 2000));
-
-      // Read logs from D1 (posted by container via curl)
-      const exec = await this.env.DB.prepare(
-        'SELECT logs FROM executions WHERE id = ?'
-      ).bind(executionId).first();
+      const logs = await this.waitForPostedLogs(executionId);
 
       await this.updateExecution(executionId, {
         status: result.exitCode === 0 ? 'success' : (result.exitCode === 124 ? 'timeout' : 'failed'),
         exit_code: result.exitCode,
         completed_at: new Date().toISOString(),
-        logs: (exec as any)?.logs || `Process exited with code ${result.exitCode}`,
+        logs: logs || `Process exited with code ${result.exitCode}`,
       });
     } catch (err: any) {
       await this.updateExecution(executionId, {
@@ -125,6 +132,7 @@ export class RunnerContainer extends Container<Env> {
     // Add internal vars for log reporting
     envVars.CF_EXECUTION_ID = executionId;
     envVars.CF_API_URL = this.env.WORKER_API_URL || 'https://cloudflare-actions.jeanpaul20020519.workers.dev';
+    envVars.CF_LOG_TOKEN = await this.computeInternalLogToken(executionId);
 
     // Fetch all files for this task
     const { results: files } = await this.env.DB.prepare(
@@ -162,7 +170,7 @@ ${delimiter}`);
     scriptParts.push(`chmod +x '${workspace}/${entrypoint}'`);
 
     // Helper: post current log file to backend
-    scriptParts.push(`_post_logs() { cat /tmp/output.log 2>/dev/null | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' | { read j; curl -sf -X PUT "$CF_API_URL/executions/$CF_EXECUTION_ID/logs" -H "Content-Type: application/json" -d "$(printf '{"logs":%s}' "$j")"; } || true; }`);
+    scriptParts.push(`_post_logs() { cat /tmp/output.log 2>/dev/null | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' | { read j; curl -sf --retry 3 --retry-delay 1 --retry-connrefused -A "CloudflareActionsRunner/1.0" -X PUT "$CF_API_URL/executions/$CF_EXECUTION_ID/logs" -H "Content-Type: application/json" -H "x-internal-log-token: $CF_LOG_TOKEN" -d "$(printf '{"logs":%s}' "$j")"; } || true; }`);
 
     // Run entrypoint with output tee'd to log file
     scriptParts.push(`/bin/bash '${workspace}/${entrypoint}' > /tmp/output.log 2>&1 &`);
@@ -174,6 +182,7 @@ ${delimiter}`);
     // Wait for command to finish
     scriptParts.push(`wait $CMD_PID`);
     scriptParts.push(`exit_code=$?`);
+    scriptParts.push(`_post_logs`);
     scriptParts.push(`wait`);
     scriptParts.push(`exit $exit_code`);
 
@@ -224,5 +233,22 @@ ${delimiter}`);
     )
       .bind(...values)
       .run();
+  }
+
+  private async waitForPostedLogs(executionId: string): Promise<string> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const exec = await this.env.DB.prepare(
+        'SELECT logs FROM executions WHERE id = ?'
+      ).bind(executionId).first();
+
+      const logs = typeof (exec as any)?.logs === 'string' ? (exec as any).logs.trim() : '';
+      if (logs) {
+        return logs;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+
+    return '';
   }
 }
