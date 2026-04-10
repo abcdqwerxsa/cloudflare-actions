@@ -105,16 +105,22 @@ export class RunnerContainer extends Container<Env> {
       // Container errored — still check state below
     }
 
-    const exitCode = this.lastExitCode;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        const state = await this.getState();
+        if (state.status === 'stopped_with_code' && state.exitCode !== undefined) {
+          return { exitCode: state.exitCode };
+        }
+      } catch {}
 
-    try {
-      const state = this.getState();
-      if (state.exitCode !== undefined) {
-        return { exitCode: state.exitCode };
+      if (this.lastExitCode !== 0) {
+        return { exitCode: this.lastExitCode };
       }
-    } catch {}
 
-    return { exitCode };
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    return { exitCode: this.lastExitCode };
   }
 
   private async buildTaskConfig(taskId: string, executionId: string): Promise<{
