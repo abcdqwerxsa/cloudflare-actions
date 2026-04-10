@@ -20,7 +20,7 @@
   "files": [
     {
       "file_path": "checks.json",
-      "content": "{\n  \"checks\": [\n    {\n      \"name\": \"Example Domain\",\n      \"url\": \"https://example.com\",\n      \"expected_status\": 200,\n      \"must_contain\": [\n        \"Example Domain\"\n      ],\n      \"max_latency_ms\": 4000,\n      \"enabled\": true\n    },\n    {\n      \"name\": \"Cloudflare Homepage\",\n      \"url\": \"https://www.cloudflare.com/\",\n      \"expected_status\": 200,\n      \"must_contain\": [\n        \"Cloudflare\"\n      ],\n      \"max_latency_ms\": 5000,\n      \"enabled\": true\n    }\n  ]\n}\n"
+      "content": "{\n  \"checks\": [\n    {\n      \"name\": \"Example Domain\",\n      \"url\": \"http://example.com\",\n      \"expected_status\": 200,\n      \"must_contain\": [\n        \"Example Domain\"\n      ],\n      \"max_latency_ms\": 4000,\n      \"enabled\": true\n    },\n    {\n      \"name\": \"Cloudflare Docs\",\n      \"url\": \"https://developers.cloudflare.com/\",\n      \"expected_status\": 200,\n      \"must_contain\": [\n        \"Cloudflare\"\n      ],\n      \"max_latency_ms\": 5000,\n      \"enabled\": true\n    }\n  ]\n}\n"
     },
     {
       "file_path": "main.py",
