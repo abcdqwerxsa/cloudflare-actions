@@ -1,0 +1,38 @@
+{
+  "slug": "website-availability-check",
+  "category": "Inspection",
+  "runtime": "Python",
+  "icon": "monitoring",
+  "highlights": [
+    "Checks status code, latency, and page content",
+    "Fails fast when any required assertion breaks",
+    "Only sends success alerts if you opt in"
+  ],
+  "name": "Website Availability Check",
+  "description": "Check site status codes, latency, and required text snippets. Notify only on failure by default.",
+  "schedule": "*/10 * * * *",
+  "entrypoint": "run.sh",
+  "env_vars": {
+    "WEBHOOK_URL": "https://example.com/webhook",
+    "TIMEOUT_SECONDS": "10",
+    "NOTIFY_ON_SUCCESS": "0"
+  },
+  "files": [
+    {
+      "file_path": "checks.json",
+      "content": "{\n  \"checks\": [\n    {\n      \"name\": \"Example Domain\",\n      \"url\": \"https://example.com\",\n      \"expected_status\": 200,\n      \"must_contain\": [\n        \"Example Domain\"\n      ],\n      \"max_latency_ms\": 4000,\n      \"enabled\": true\n    },\n    {\n      \"name\": \"Cloudflare Homepage\",\n      \"url\": \"https://www.cloudflare.com/\",\n      \"expected_status\": 200,\n      \"must_contain\": [\n        \"Cloudflare\"\n      ],\n      \"max_latency_ms\": 5000,\n      \"enabled\": true\n    }\n  ]\n}\n"
+    },
+    {
+      "file_path": "main.py",
+      "content": "#!/usr/bin/env python3\nimport json\nimport os\nimport sys\nimport time\nfrom pathlib import Path\n\nimport requests\n\n\ndef env_int(name: str, default: int) -> int:\n    value = os.environ.get(name, \"\").strip()\n    if not value:\n        return default\n    try:\n        return int(value)\n    except ValueError as exc:\n        raise SystemExit(f\"{name} must be an integer, got {value!r}\") from exc\n\n\ndef send_report(message: str) -> None:\n    print(message)\n    webhook_url = os.environ.get(\"WEBHOOK_URL\", \"\").strip()\n    if not webhook_url:\n        return\n\n    try:\n        response = requests.post(webhook_url, json={\"text\": message}, timeout=10)\n        print(f\"Webhook delivered with status {response.status_code}\")\n    except requests.RequestException as exc:\n        print(f\"Webhook delivery failed: {exc}\", file=sys.stderr)\n\n\ndef main() -> int:\n    timeout_seconds = env_int(\"TIMEOUT_SECONDS\", 10)\n    notify_on_success = os.environ.get(\"NOTIFY_ON_SUCCESS\", \"0\").strip() == \"1\"\n    payload = json.loads(Path(\"checks.json\").read_text(encoding=\"utf-8\"))\n    checks = [check for check in payload.get(\"checks\", []) if check.get(\"enabled\", True)]\n    if not checks:\n        raise SystemExit(\"checks.json does not contain any enabled checks\")\n\n    session = requests.Session()\n    session.headers.update({\"User-Agent\": \"cloudflare-actions/website-availability-check\"})\n\n    successes: list[str] = []\n    failures: list[str] = []\n\n    for check in checks:\n        name = check.get(\"name\") or check.get(\"url\") or \"Unnamed check\"\n        url = check.get(\"url\", \"\").strip()\n        expected_status = int(check.get(\"expected_status\", 200))\n        expected_snippets = check.get(\"must_contain\", [])\n        max_latency_ms = int(check.get(\"max_latency_ms\", 5000))\n\n        start = time.perf_counter()\n        try:\n            response = session.get(url, timeout=timeout_seconds)\n            latency_ms = int((time.perf_counter() - start) * 1000)\n        except requests.RequestException as exc:\n            failures.append(f\"{name}: request failed ({exc})\")\n            continue\n\n        if response.status_code != expected_status:\n            failures.append(\n                f\"{name}: expected status {expected_status}, got {response.status_code} ({url})\"\n            )\n            continue\n\n        if latency_ms > max_latency_ms:\n            failures.append(\n                f\"{name}: latency {latency_ms}ms exceeded threshold {max_latency_ms}ms ({url})\"\n            )\n            continue\n\n        missing = [snippet for snippet in expected_snippets if snippet not in response.text]\n        if missing:\n            failures.append(f\"{name}: missing text snippets {missing} ({url})\")\n            continue\n\n        successes.append(f\"- {name}: {response.status_code} in {latency_ms}ms\")\n\n    lines = [\n        \"# Website Availability Check\",\n        \"\",\n        f\"- Checks executed: {len(checks)}\",\n        f\"- Passed: {len(successes)}\",\n        f\"- Failed: {len(failures)}\",\n    ]\n\n    if successes:\n        lines.extend([\"\", \"Passing checks:\"])\n        lines.extend(successes)\n\n    if failures:\n        lines.extend([\"\", \"Failures:\"])\n        lines.extend([f\"- {failure}\" for failure in failures])\n        send_report(\"\\n\".join(lines))\n        return 1\n\n    message = \"\\n\".join(lines)\n    print(message)\n    if notify_on_success:\n        send_report(message)\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n"
+    },
+    {
+      "file_path": "requirements.txt",
+      "content": "requests\n"
+    },
+    {
+      "file_path": "run.sh",
+      "content": "#!/usr/bin/env bash\nset -euo pipefail\n\npython3 -m venv .venv\nsource .venv/bin/activate\npython -m pip install --disable-pip-version-check --quiet -r requirements.txt\npython main.py\n"
+    }
+  ]
+}

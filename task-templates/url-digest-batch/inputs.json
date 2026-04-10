@@ -1,0 +1,16 @@
+{
+  "urls": [
+    {
+      "label": "Cloudflare Blog",
+      "url": "https://blog.cloudflare.com/"
+    },
+    {
+      "label": "Python Blog",
+      "url": "https://www.python.org/blogs/"
+    },
+    {
+      "label": "Hacker News Frontpage",
+      "url": "https://news.ycombinator.com/"
+    }
+  ]
+}

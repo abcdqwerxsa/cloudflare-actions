@@ -1,0 +1,38 @@
+{
+  "slug": "url-digest-batch",
+  "category": "Batch Processing",
+  "runtime": "Python",
+  "icon": "summarize",
+  "highlights": [
+    "Fetches and extracts multiple URLs in one run",
+    "Falls back to HTML parsing when text extraction fails",
+    "Produces per-page and overall summaries"
+  ],
+  "name": "URL Digest Batch",
+  "description": "Fetch a batch of URLs, extract readable text, and produce a digest with per-page and overall summaries.",
+  "schedule": "30 8 * * *",
+  "entrypoint": "run.sh",
+  "env_vars": {
+    "WEBHOOK_URL": "https://example.com/webhook",
+    "MAX_URLS": "20",
+    "MAX_SENTENCES_PER_ITEM": "3"
+  },
+  "files": [
+    {
+      "file_path": "inputs.json",
+      "content": "{\n  \"urls\": [\n    {\n      \"label\": \"Cloudflare Blog\",\n      \"url\": \"https://blog.cloudflare.com/\"\n    },\n    {\n      \"label\": \"Python Blog\",\n      \"url\": \"https://www.python.org/blogs/\"\n    },\n    {\n      \"label\": \"Hacker News Frontpage\",\n      \"url\": \"https://news.ycombinator.com/\"\n    }\n  ]\n}\n"
+    },
+    {
+      "file_path": "main.py",
+      "content": "#!/usr/bin/env python3\nimport json\nimport os\nimport re\nimport sys\nfrom pathlib import Path\n\nimport requests\nimport trafilatura\nfrom bs4 import BeautifulSoup\n\n\ndef env_int(name: str, default: int) -> int:\n    value = os.environ.get(name, \"\").strip()\n    if not value:\n        return default\n    try:\n        return int(value)\n    except ValueError as exc:\n        raise SystemExit(f\"{name} must be an integer, got {value!r}\") from exc\n\n\ndef send_report(message: str) -> None:\n    print(message)\n    webhook_url = os.environ.get(\"WEBHOOK_URL\", \"\").strip()\n    if not webhook_url:\n        return\n\n    try:\n        response = requests.post(webhook_url, json={\"text\": message}, timeout=10)\n        print(f\"Webhook delivered with status {response.status_code}\")\n    except requests.RequestException as exc:\n        print(f\"Webhook delivery failed: {exc}\", file=sys.stderr)\n\n\ndef fallback_extract(html: str) -> tuple[str, str]:\n    soup = BeautifulSoup(html, \"html.parser\")\n    title = soup.title.string.strip() if soup.title and soup.title.string else \"Untitled page\"\n    text = \" \".join(soup.get_text(\" \", strip=True).split())\n    return title, text\n\n\ndef summarize_text(text: str, max_sentences: int) -> str:\n    sentences = [sentence.strip() for sentence in re.split(r\"(?<=[.!?])\\s+\", text) if sentence.strip()]\n    if not sentences:\n        return \"No readable text extracted.\"\n    return \" \".join(sentences[:max_sentences])[:800]\n\n\ndef main() -> int:\n    max_urls = env_int(\"MAX_URLS\", 20)\n    max_sentences = env_int(\"MAX_SENTENCES_PER_ITEM\", 3)\n    configured_urls = json.loads(Path(\"inputs.json\").read_text(encoding=\"utf-8\")).get(\"urls\", [])\n    if not configured_urls:\n        raise SystemExit(\"inputs.json does not contain any URLs\")\n\n    targets = configured_urls[:max_urls]\n    session = requests.Session()\n    session.headers.update({\"User-Agent\": \"cloudflare-actions/url-digest-batch\"})\n\n    summaries: list[dict] = []\n    failures: list[str] = []\n\n    for target in targets:\n        label = target.get(\"label\") or target.get(\"url\") or \"Unnamed URL\"\n        url = str(target.get(\"url\", \"\")).strip()\n        if not url:\n            failures.append(f\"{label}: missing url\")\n            continue\n\n        try:\n            response = session.get(url, timeout=20)\n            response.raise_for_status()\n        except requests.RequestException as exc:\n            failures.append(f\"{label}: request failed ({exc})\")\n            continue\n\n        html = response.text\n        extracted = trafilatura.extract(html, include_comments=False, include_tables=False)\n        if extracted:\n            title = label\n            text = \" \".join(extracted.split())\n        else:\n            title, text = fallback_extract(html)\n\n        if not text:\n            failures.append(f\"{label}: no readable text extracted\")\n            continue\n\n        summaries.append(\n            {\n                \"label\": label,\n                \"url\": url,\n                \"title\": title,\n                \"text_length\": len(text),\n                \"summary\": summarize_text(text, max_sentences),\n            }\n        )\n\n    if not summaries:\n        send_report(\n            \"# URL Digest Batch\\n\\nNo pages produced readable content.\\n\\nFailures:\\n\"\n            + \"\\n\".join(f\"- {failure}\" for failure in failures)\n        )\n        return 1\n\n    summaries.sort(key=lambda item: item[\"text_length\"], reverse=True)\n    overall_highlights = [item[\"label\"] for item in summaries[:3]]\n\n    lines = [\n        \"# URL Digest Batch\",\n        \"\",\n        f\"- URLs attempted: {len(targets)}\",\n        f\"- Successful extracts: {len(summaries)}\",\n        f\"- Failed extracts: {len(failures)}\",\n        f\"- Longest reads: {', '.join(overall_highlights)}\",\n        \"\",\n        \"Per-page summaries:\",\n    ]\n\n    for index, item in enumerate(summaries, start=1):\n        lines.extend(\n            [\n                f\"{index}. {item['label']}\",\n                f\"   Link: {item['url']}\",\n                f\"   Extracted length: {item['text_length']} characters\",\n                f\"   Summary: {item['summary']}\",\n            ]\n        )\n\n    if failures:\n        lines.extend([\"\", \"Fetch issues:\"])\n        lines.extend([f\"- {failure}\" for failure in failures])\n\n    send_report(\"\\n\".join(lines))\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n"
+    },
+    {
+      "file_path": "requirements.txt",
+      "content": "beautifulsoup4\nrequests\ntrafilatura\n"
+    },
+    {
+      "file_path": "run.sh",
+      "content": "#!/usr/bin/env bash\nset -euo pipefail\n\npython3 -m venv .venv\nsource .venv/bin/activate\npython -m pip install --disable-pip-version-check --quiet -r requirements.txt\npython main.py\n"
+    }
+  ]
+}

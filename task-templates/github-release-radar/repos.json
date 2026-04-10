@@ -1,0 +1,13 @@
+{
+  "repos": [
+    {
+      "name": "cloudflare/workers-sdk"
+    },
+    {
+      "name": "vercel/next.js"
+    },
+    {
+      "name": "python/cpython"
+    }
+  ]
+}

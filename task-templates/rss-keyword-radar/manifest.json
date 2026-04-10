@@ -1,0 +1,19 @@
+{
+  "name": "RSS Keyword Radar",
+  "description": "Fetch recent RSS and Atom items, filter them by keyword, and send a markdown digest to WEBHOOK_URL.",
+  "category": "Information Radar",
+  "runtime": "Python",
+  "icon": "rss_feed",
+  "highlights": [
+    "Scans multiple RSS and Atom feeds",
+    "Matches against configurable keywords",
+    "Builds a digest for the last 24 hours"
+  ],
+  "schedule": "0 9 * * *",
+  "entrypoint": "run.sh",
+  "env_vars": {
+    "WEBHOOK_URL": "https://example.com/webhook",
+    "LOOKBACK_HOURS": "24",
+    "MAX_ITEMS": "10"
+  }
+}

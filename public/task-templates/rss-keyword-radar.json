@@ -1,0 +1,42 @@
+{
+  "slug": "rss-keyword-radar",
+  "category": "Information Radar",
+  "runtime": "Python",
+  "icon": "rss_feed",
+  "highlights": [
+    "Scans multiple RSS and Atom feeds",
+    "Matches against configurable keywords",
+    "Builds a digest for the last 24 hours"
+  ],
+  "name": "RSS Keyword Radar",
+  "description": "Fetch recent RSS and Atom items, filter them by keyword, and send a markdown digest to WEBHOOK_URL.",
+  "schedule": "0 9 * * *",
+  "entrypoint": "run.sh",
+  "env_vars": {
+    "WEBHOOK_URL": "https://example.com/webhook",
+    "LOOKBACK_HOURS": "24",
+    "MAX_ITEMS": "10"
+  },
+  "files": [
+    {
+      "file_path": "feeds.json",
+      "content": "{\n  \"feeds\": [\n    {\n      \"name\": \"Hacker News Frontpage\",\n      \"url\": \"https://hnrss.org/frontpage\"\n    },\n    {\n      \"name\": \"Python Insider\",\n      \"url\": \"https://feeds.feedburner.com/PythonInsider\"\n    },\n    {\n      \"name\": \"Cloudflare Blog\",\n      \"url\": \"https://blog.cloudflare.com/rss/\"\n    }\n  ]\n}\n"
+    },
+    {
+      "file_path": "keywords.txt",
+      "content": "cloudflare\nworker\ncron\npython\nrelease\nautomation\n"
+    },
+    {
+      "file_path": "main.py",
+      "content": "#!/usr/bin/env python3\nimport json\nimport os\nimport sys\nimport calendar\nfrom datetime import datetime, timedelta, timezone\nfrom pathlib import Path\n\nimport feedparser\nimport requests\nfrom dateutil import parser as date_parser\n\n\ndef env_int(name: str, default: int) -> int:\n    value = os.environ.get(name, \"\").strip()\n    if not value:\n        return default\n    try:\n        return int(value)\n    except ValueError as exc:\n        raise SystemExit(f\"{name} must be an integer, got {value!r}\") from exc\n\n\ndef send_report(message: str) -> None:\n    print(message)\n    webhook_url = os.environ.get(\"WEBHOOK_URL\", \"\").strip()\n    if not webhook_url:\n        return\n\n    try:\n        response = requests.post(\n            webhook_url,\n            json={\"text\": message},\n            timeout=10,\n        )\n        print(f\"Webhook delivered with status {response.status_code}\")\n    except requests.RequestException as exc:\n        print(f\"Webhook delivery failed: {exc}\", file=sys.stderr)\n\n\ndef load_config() -> tuple[list[dict], list[str]]:\n    feeds = json.loads(Path(\"feeds.json\").read_text(encoding=\"utf-8\")).get(\"feeds\", [])\n    keywords = [\n        line.strip().lower()\n        for line in Path(\"keywords.txt\").read_text(encoding=\"utf-8\").splitlines()\n        if line.strip() and not line.strip().startswith(\"#\")\n    ]\n    if not feeds:\n        raise SystemExit(\"feeds.json does not contain any feeds\")\n    if not keywords:\n        raise SystemExit(\"keywords.txt does not contain any keywords\")\n    return feeds, keywords\n\n\ndef parse_timestamp(entry: dict) -> datetime | None:\n    for field_name in (\"published\", \"updated\", \"created\"):\n        raw_value = entry.get(field_name)\n        if not raw_value:\n            continue\n        try:\n            parsed = date_parser.parse(raw_value)\n            if parsed.tzinfo is None:\n                parsed = parsed.replace(tzinfo=timezone.utc)\n            return parsed.astimezone(timezone.utc)\n        except (ValueError, TypeError, OverflowError):\n            continue\n\n    for field_name in (\"published_parsed\", \"updated_parsed\", \"created_parsed\"):\n        parsed_tuple = entry.get(field_name)\n        if not parsed_tuple:\n            continue\n        return datetime.fromtimestamp(calendar.timegm(parsed_tuple), tz=timezone.utc)\n\n    return None\n\n\ndef main() -> int:\n    lookback_hours = env_int(\"LOOKBACK_HOURS\", 24)\n    max_items = env_int(\"MAX_ITEMS\", 10)\n    cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)\n\n    feeds, keywords = load_config()\n    session = requests.Session()\n    session.headers.update({\"User-Agent\": \"cloudflare-actions/rss-keyword-radar\"})\n\n    matches: list[dict] = []\n    failures: list[str] = []\n    seen_links: set[str] = set()\n\n    for feed in feeds:\n        name = feed.get(\"name\") or feed.get(\"url\") or \"Unnamed feed\"\n        url = feed.get(\"url\", \"\").strip()\n        if not url:\n            failures.append(f\"{name}: missing url\")\n            continue\n\n        try:\n            response = session.get(url, timeout=20)\n            response.raise_for_status()\n            parsed = feedparser.parse(response.content)\n        except requests.RequestException as exc:\n            failures.append(f\"{name}: {exc}\")\n            continue\n\n        for entry in parsed.entries:\n            link = (entry.get(\"link\") or \"\").strip()\n            title = (entry.get(\"title\") or \"Untitled\").strip()\n            summary = (entry.get(\"summary\") or entry.get(\"description\") or \"\").strip()\n            haystack = f\"{title}\\n{summary}\".lower()\n            matched_keywords = [keyword for keyword in keywords if keyword in haystack]\n            if not matched_keywords:\n                continue\n\n            published_at = parse_timestamp(entry)\n            if published_at and published_at < cutoff:\n                continue\n\n            dedupe_key = link or f\"{name}:{title}\"\n            if dedupe_key in seen_links:\n                continue\n            seen_links.add(dedupe_key)\n\n            matches.append(\n                {\n                    \"title\": title,\n                    \"link\": link or \"No link provided\",\n                    \"source\": name,\n                    \"published_at\": published_at or datetime.now(timezone.utc),\n                    \"matched_keywords\": matched_keywords,\n                }\n            )\n\n    matches.sort(key=lambda item: item[\"published_at\"], reverse=True)\n    top_matches = matches[:max_items]\n\n    lines = [\n        \"# RSS Keyword Radar\",\n        \"\",\n        f\"- Window: last {lookback_hours} hours\",\n        f\"- Feeds configured: {len(feeds)}\",\n        f\"- Matches found: {len(matches)}\",\n    ]\n\n    if top_matches:\n        lines.append(\"\")\n        for index, match in enumerate(top_matches, start=1):\n            published = match[\"published_at\"].strftime(\"%Y-%m-%d %H:%M UTC\")\n            keyword_text = \", \".join(match[\"matched_keywords\"])\n            lines.extend(\n                [\n                    f\"{index}. {match['title']}\",\n                    f\"   Source: {match['source']}\",\n                    f\"   Time: {published}\",\n                    f\"   Keywords: {keyword_text}\",\n                    f\"   Link: {match['link']}\",\n                ]\n            )\n    else:\n        lines.extend([\"\", \"No keyword matches were found in the configured window.\"])\n\n    if failures:\n        lines.extend([\"\", \"Feed fetch issues:\"])\n        lines.extend([f\"- {failure}\" for failure in failures])\n\n    message = \"\\n\".join(lines)\n    send_report(message)\n\n    if failures and len(failures) == len(feeds):\n        return 1\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n"
+    },
+    {
+      "file_path": "requirements.txt",
+      "content": "feedparser\npython-dateutil\nrequests\n"
+    },
+    {
+      "file_path": "run.sh",
+      "content": "#!/usr/bin/env bash\nset -euo pipefail\n\npython3 -m venv .venv\nsource .venv/bin/activate\npython -m pip install --disable-pip-version-check --quiet -r requirements.txt\npython main.py\n"
+    }
+  ]
+}

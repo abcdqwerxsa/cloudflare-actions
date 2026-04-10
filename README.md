@@ -48,6 +48,42 @@ Cron Trigger (every min) → Evaluate schedules → Runner Durable Objects
 | POST | `/keys` | Create API key |
 | DELETE | `/keys/:id` | Delete API key |
 
+## Task Templates
+
+The repository includes ready-to-import task templates under `task-templates/` for common use cases:
+
+- RSS and Atom keyword monitoring
+- GitHub release monitoring
+- Website and API smoke checks
+- Batch URL digests
+- Remote CSV and JSON daily reports
+
+Validate all templates:
+
+```bash
+npm run validate:task-templates
+```
+
+Regenerate the frontend template registry after editing template files:
+
+```bash
+npm run generate:task-template-registry
+```
+
+Preview a task payload before import:
+
+```bash
+npm run import:task-template -- rss-keyword-radar --dry-run
+```
+
+Import a template into a running worker:
+
+```bash
+CF_ACTIONS_API_BASE=http://127.0.0.1:8787 \
+CF_ACTIONS_API_KEY=your-api-key \
+npm run import:task-template -- website-availability-check
+```
+
 ## Deployment
 
 ### Prerequisites
@@ -122,6 +158,8 @@ Update `API_KEY` in `wrangler.toml` for production use.
 │   ├── runner-container.ts # Container execution (DO)
 │   └── types.ts            # Shared TypeScript types
 ├── migrations/             # D1 database schema
+├── task-templates/         # Ready-to-import task templates
+├── scripts/                # Template import and validation scripts
 ├── Dockerfile              # Default container image
 ├── wrangler.toml           # Worker config (API + DO + Cron)
 └── wrangler-pages.toml     # Pages config (frontend deploy)

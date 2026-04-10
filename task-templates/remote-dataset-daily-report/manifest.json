@@ -1,0 +1,18 @@
+{
+  "name": "Remote Dataset Daily Report",
+  "description": "Download a remote CSV or JSON dataset, compute daily aggregates, detect anomalies, and post a summary report.",
+  "category": "Batch Processing",
+  "runtime": "Python",
+  "icon": "table_chart",
+  "highlights": [
+    "Supports both CSV and JSON datasets",
+    "Computes grouped summaries and numeric stats",
+    "Flags anomalies using simple threshold rules"
+  ],
+  "schedule": "0 7 * * *",
+  "entrypoint": "run.sh",
+  "env_vars": {
+    "WEBHOOK_URL": "https://example.com/webhook",
+    "DATA_URL": "https://example.com/data.csv"
+  }
+}

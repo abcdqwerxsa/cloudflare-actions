@@ -1,0 +1,19 @@
+{
+  "name": "Website Availability Check",
+  "description": "Check site status codes, latency, and required text snippets. Notify only on failure by default.",
+  "category": "Inspection",
+  "runtime": "Python",
+  "icon": "monitoring",
+  "highlights": [
+    "Checks status code, latency, and page content",
+    "Fails fast when any required assertion breaks",
+    "Only sends success alerts if you opt in"
+  ],
+  "schedule": "*/10 * * * *",
+  "entrypoint": "run.sh",
+  "env_vars": {
+    "WEBHOOK_URL": "https://example.com/webhook",
+    "TIMEOUT_SECONDS": "10",
+    "NOTIFY_ON_SUCCESS": "0"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "slug": "remote-dataset-daily-report",
+  "category": "Batch Processing",
+  "runtime": "Python",
+  "icon": "table_chart",
+  "highlights": [
+    "Supports both CSV and JSON datasets",
+    "Computes grouped summaries and numeric stats",
+    "Flags anomalies using simple threshold rules"
+  ],
+  "name": "Remote Dataset Daily Report",
+  "description": "Download a remote CSV or JSON dataset, compute daily aggregates, detect anomalies, and post a summary report.",
+  "schedule": "0 7 * * *",
+  "entrypoint": "run.sh",
+  "env_vars": {
+    "WEBHOOK_URL": "https://example.com/webhook",
+    "DATA_URL": "https://example.com/data.csv"
+  },
+  "files": [
+    {
+      "file_path": "config.json",
+      "content": "{\n  \"format\": \"csv\",\n  \"time_column\": \"created_at\",\n  \"group_by\": [\n    \"status\"\n  ],\n  \"top_n\": 5,\n  \"numeric_summaries\": [\n    \"amount\"\n  ],\n  \"anomaly_rules\": [\n    {\n      \"label\": \"Large amount rows\",\n      \"column\": \"amount\",\n      \"gt\": 1000\n    }\n  ]\n}\n"
+    },
+    {
+      "file_path": "main.py",
+      "content": "#!/usr/bin/env python3\nimport io\nimport json\nimport os\nimport sys\nfrom pathlib import Path\n\nimport pandas as pd\nimport requests\n\n\ndef send_report(message: str) -> None:\n    print(message)\n    webhook_url = os.environ.get(\"WEBHOOK_URL\", \"\").strip()\n    if not webhook_url:\n        return\n\n    try:\n        response = requests.post(webhook_url, json={\"text\": message}, timeout=10)\n        print(f\"Webhook delivered with status {response.status_code}\")\n    except requests.RequestException as exc:\n        print(f\"Webhook delivery failed: {exc}\", file=sys.stderr)\n\n\ndef load_frame(raw_text: str, config: dict) -> pd.DataFrame:\n    fmt = str(config.get(\"format\", \"csv\")).lower()\n    if fmt == \"csv\":\n        return pd.read_csv(io.StringIO(raw_text))\n    if fmt == \"json\":\n        payload = json.loads(raw_text)\n        if isinstance(payload, list):\n            return pd.DataFrame(payload)\n        records_path = config.get(\"json_records_path\")\n        current = payload\n        if records_path:\n            for part in str(records_path).split(\".\"):\n                current = current[part]\n        return pd.DataFrame(current)\n    raise SystemExit(f\"Unsupported format: {fmt}\")\n\n\ndef main() -> int:\n    data_url = os.environ.get(\"DATA_URL\", \"\").strip()\n    if not data_url:\n        raise SystemExit(\"DATA_URL is required\")\n\n    config = json.loads(Path(\"config.json\").read_text(encoding=\"utf-8\"))\n    response = requests.get(data_url, timeout=30, headers={\"User-Agent\": \"cloudflare-actions/dataset-report\"})\n    response.raise_for_status()\n\n    frame = load_frame(response.text, config)\n    lines = [\n        \"# Remote Dataset Daily Report\",\n        \"\",\n        f\"- Source: {data_url}\",\n        f\"- Rows: {len(frame)}\",\n        f\"- Columns: {len(frame.columns)}\",\n    ]\n\n    time_column = config.get(\"time_column\")\n    if time_column:\n        if time_column not in frame.columns:\n            raise SystemExit(f\"time_column {time_column!r} is missing from the dataset\")\n        frame[time_column] = pd.to_datetime(frame[time_column], errors=\"coerce\", utc=True)\n        recent_cutoff = pd.Timestamp.utcnow() - pd.Timedelta(hours=24)\n        recent_rows = int((frame[time_column] >= recent_cutoff).fillna(False).sum())\n        lines.append(f\"- Recent rows (24h): {recent_rows}\")\n\n    group_by = config.get(\"group_by\", [])\n    if group_by:\n        if isinstance(group_by, str):\n            group_by = [group_by]\n        missing_columns = [column for column in group_by if column not in frame.columns]\n        if missing_columns:\n            raise SystemExit(f\"group_by columns missing from dataset: {missing_columns}\")\n        top_n = int(config.get(\"top_n\", 5))\n        grouped = frame.groupby(group_by, dropna=False).size().sort_values(ascending=False).head(top_n)\n        lines.extend([\"\", \"Top groups:\"])\n        for key, count in grouped.items():\n            key_display = key if isinstance(key, tuple) else (key,)\n            lines.append(f\"- {key_display}: {int(count)}\")\n\n    numeric_summaries = config.get(\"numeric_summaries\", [])\n    if numeric_summaries:\n        lines.extend([\"\", \"Numeric summaries:\"])\n        for column in numeric_summaries:\n            if column not in frame.columns:\n                raise SystemExit(f\"numeric summary column {column!r} is missing from the dataset\")\n            series = pd.to_numeric(frame[column], errors=\"coerce\")\n            lines.append(\n                f\"- {column}: sum={series.sum(skipna=True):.2f}, mean={series.mean(skipna=True):.2f}, max={series.max(skipna=True):.2f}\"\n            )\n\n    anomaly_rules = config.get(\"anomaly_rules\", [])\n    if anomaly_rules:\n        lines.extend([\"\", \"Anomalies:\"])\n        for rule in anomaly_rules:\n            column = rule[\"column\"]\n            if column not in frame.columns:\n                raise SystemExit(f\"anomaly column {column!r} is missing from the dataset\")\n            series = pd.to_numeric(frame[column], errors=\"coerce\")\n            if \"gt\" in rule:\n                filtered = frame[series > float(rule[\"gt\"])]\n                operator_text = f\">{rule['gt']}\"\n            elif \"lt\" in rule:\n                filtered = frame[series < float(rule[\"lt\"])]\n                operator_text = f\"<{rule['lt']}\"\n            else:\n                raise SystemExit(f\"anomaly rule for column {column!r} needs gt or lt\")\n\n            lines.append(\n                f\"- {rule.get('label', column)}: {len(filtered)} rows where {column} {operator_text}\"\n            )\n\n    output_path = \"/tmp/output.csv\"\n    frame.to_csv(output_path, index=False)\n    lines.append(\"\")\n    lines.append(f\"Cleaned dataset saved to {output_path}\")\n\n    send_report(\"\\n\".join(lines))\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n"
+    },
+    {
+      "file_path": "requirements.txt",
+      "content": "pandas\nrequests\n"
+    },
+    {
+      "file_path": "run.sh",
+      "content": "#!/usr/bin/env bash\nset -euo pipefail\n\npython3 -m venv .venv\nsource .venv/bin/activate\npython -m pip install --disable-pip-version-check --quiet -r requirements.txt\npython main.py\n"
+    }
+  ]
+}

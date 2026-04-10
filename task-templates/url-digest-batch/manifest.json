@@ -1,0 +1,19 @@
+{
+  "name": "URL Digest Batch",
+  "description": "Fetch a batch of URLs, extract readable text, and produce a digest with per-page and overall summaries.",
+  "category": "Batch Processing",
+  "runtime": "Python",
+  "icon": "summarize",
+  "highlights": [
+    "Fetches and extracts multiple URLs in one run",
+    "Falls back to HTML parsing when text extraction fails",
+    "Produces per-page and overall summaries"
+  ],
+  "schedule": "30 8 * * *",
+  "entrypoint": "run.sh",
+  "env_vars": {
+    "WEBHOOK_URL": "https://example.com/webhook",
+    "MAX_URLS": "20",
+    "MAX_SENTENCES_PER_ITEM": "3"
+  }
+}

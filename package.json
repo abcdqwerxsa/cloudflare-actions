@@ -8,7 +8,10 @@
     "deploy": "wrangler deploy",
     "start": "next start",
     "lint": "eslint .",
-    "clean": "next clean"
+    "clean": "next clean",
+    "generate:task-template-registry": "node scripts/generate-task-template-registry.mjs",
+    "import:task-template": "node scripts/import-task-template.mjs",
+    "validate:task-templates": "node scripts/validate-task-templates.mjs"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.2.4",

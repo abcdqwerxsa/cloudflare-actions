@@ -1,0 +1,20 @@
+{
+  "name": "GitHub Release Radar",
+  "description": "Watch a list of repositories for new GitHub releases and post a release digest to WEBHOOK_URL.",
+  "category": "Information Radar",
+  "runtime": "Python",
+  "icon": "new_releases",
+  "highlights": [
+    "Tracks release activity across multiple repos",
+    "Summarizes release notes in one digest",
+    "Supports authenticated or anonymous GitHub API access"
+  ],
+  "schedule": "0 10,18 * * *",
+  "entrypoint": "run.sh",
+  "env_vars": {
+    "WEBHOOK_URL": "https://example.com/webhook",
+    "GITHUB_TOKEN": "",
+    "LOOKBACK_HOURS": "24",
+    "MAX_RELEASES": "10"
+  }
+}

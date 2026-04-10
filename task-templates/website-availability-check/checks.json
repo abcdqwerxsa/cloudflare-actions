@@ -1,0 +1,24 @@
+{
+  "checks": [
+    {
+      "name": "Example Domain",
+      "url": "https://example.com",
+      "expected_status": 200,
+      "must_contain": [
+        "Example Domain"
+      ],
+      "max_latency_ms": 4000,
+      "enabled": true
+    },
+    {
+      "name": "Cloudflare Homepage",
+      "url": "https://www.cloudflare.com/",
+      "expected_status": 200,
+      "must_contain": [
+        "Cloudflare"
+      ],
+      "max_latency_ms": 5000,
+      "enabled": true
+    }
+  ]
+}

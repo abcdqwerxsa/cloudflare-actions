@@ -1,0 +1,18 @@
+{
+  "format": "csv",
+  "time_column": "created_at",
+  "group_by": [
+    "status"
+  ],
+  "top_n": 5,
+  "numeric_summaries": [
+    "amount"
+  ],
+  "anomaly_rules": [
+    {
+      "label": "Large amount rows",
+      "column": "amount",
+      "gt": 1000
+    }
+  ]
+}

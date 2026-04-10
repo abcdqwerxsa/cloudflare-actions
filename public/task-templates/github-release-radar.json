@@ -1,0 +1,39 @@
+{
+  "slug": "github-release-radar",
+  "category": "Information Radar",
+  "runtime": "Python",
+  "icon": "new_releases",
+  "highlights": [
+    "Tracks release activity across multiple repos",
+    "Summarizes release notes in one digest",
+    "Supports authenticated or anonymous GitHub API access"
+  ],
+  "name": "GitHub Release Radar",
+  "description": "Watch a list of repositories for new GitHub releases and post a release digest to WEBHOOK_URL.",
+  "schedule": "0 10,18 * * *",
+  "entrypoint": "run.sh",
+  "env_vars": {
+    "WEBHOOK_URL": "https://example.com/webhook",
+    "GITHUB_TOKEN": "",
+    "LOOKBACK_HOURS": "24",
+    "MAX_RELEASES": "10"
+  },
+  "files": [
+    {
+      "file_path": "main.py",
+      "content": "#!/usr/bin/env python3\nimport json\nimport os\nimport sys\nfrom datetime import datetime, timedelta, timezone\nfrom pathlib import Path\n\nimport requests\nfrom dateutil import parser as date_parser\n\n\ndef env_int(name: str, default: int) -> int:\n    value = os.environ.get(name, \"\").strip()\n    if not value:\n        return default\n    try:\n        return int(value)\n    except ValueError as exc:\n        raise SystemExit(f\"{name} must be an integer, got {value!r}\") from exc\n\n\ndef send_report(message: str) -> None:\n    print(message)\n    webhook_url = os.environ.get(\"WEBHOOK_URL\", \"\").strip()\n    if not webhook_url:\n        return\n\n    try:\n        response = requests.post(webhook_url, json={\"text\": message}, timeout=10)\n        print(f\"Webhook delivered with status {response.status_code}\")\n    except requests.RequestException as exc:\n        print(f\"Webhook delivery failed: {exc}\", file=sys.stderr)\n\n\ndef summarize_notes(body: str, limit: int = 300) -> str:\n    compact = \" \".join(body.split())\n    if len(compact) <= limit:\n        return compact or \"No release notes provided.\"\n    return f\"{compact[:limit - 3]}...\"\n\n\ndef main() -> int:\n    lookback_hours = env_int(\"LOOKBACK_HOURS\", 24)\n    max_releases = env_int(\"MAX_RELEASES\", 10)\n    cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)\n    repos = json.loads(Path(\"repos.json\").read_text(encoding=\"utf-8\")).get(\"repos\", [])\n    if not repos:\n        raise SystemExit(\"repos.json does not contain any repositories\")\n\n    session = requests.Session()\n    session.headers.update(\n        {\n            \"Accept\": \"application/vnd.github+json\",\n            \"User-Agent\": \"cloudflare-actions/github-release-radar\",\n        }\n    )\n    github_token = os.environ.get(\"GITHUB_TOKEN\", \"\").strip()\n    if github_token:\n        session.headers[\"Authorization\"] = f\"Bearer {github_token}\"\n\n    releases: list[dict] = []\n    failures: list[str] = []\n\n    for repo in repos:\n        repo_name = (repo.get(\"name\") or \"\").strip()\n        if not repo_name:\n            failures.append(\"Encountered a repo entry with no name\")\n            continue\n\n        url = f\"https://api.github.com/repos/{repo_name}/releases\"\n        try:\n            response = session.get(url, timeout=20)\n            response.raise_for_status()\n            payload = response.json()\n        except (requests.RequestException, ValueError) as exc:\n            failures.append(f\"{repo_name}: {exc}\")\n            continue\n\n        for release in payload:\n            published_at_raw = release.get(\"published_at\") or release.get(\"created_at\")\n            if not published_at_raw:\n                continue\n            published_at = date_parser.parse(published_at_raw)\n            if published_at.tzinfo is None:\n                published_at = published_at.replace(tzinfo=timezone.utc)\n            published_at = published_at.astimezone(timezone.utc)\n            if published_at < cutoff:\n                continue\n\n            releases.append(\n                {\n                    \"repo\": repo_name,\n                    \"tag_name\": release.get(\"tag_name\") or \"unknown\",\n                    \"name\": release.get(\"name\") or \"Untitled release\",\n                    \"published_at\": published_at,\n                    \"url\": release.get(\"html_url\") or f\"https://github.com/{repo_name}/releases\",\n                    \"notes\": summarize_notes(release.get(\"body\") or \"\"),\n                }\n            )\n\n    releases.sort(key=lambda item: item[\"published_at\"], reverse=True)\n    top_releases = releases[:max_releases]\n\n    lines = [\n        \"# GitHub Release Radar\",\n        \"\",\n        f\"- Window: last {lookback_hours} hours\",\n        f\"- Repositories configured: {len(repos)}\",\n        f\"- Releases found: {len(releases)}\",\n    ]\n\n    if not github_token:\n        lines.append(\"- Authentication: anonymous GitHub API access, low rate limits apply\")\n\n    if top_releases:\n        lines.append(\"\")\n        for index, release in enumerate(top_releases, start=1):\n            published = release[\"published_at\"].strftime(\"%Y-%m-%d %H:%M UTC\")\n            lines.extend(\n                [\n                    f\"{index}. {release['repo']} {release['tag_name']} ({release['name']})\",\n                    f\"   Published: {published}\",\n                    f\"   Link: {release['url']}\",\n                    f\"   Notes: {release['notes']}\",\n                ]\n            )\n    else:\n        lines.extend([\"\", \"No releases were published in the configured window.\"])\n\n    if failures:\n        lines.extend([\"\", \"Repository fetch issues:\"])\n        lines.extend([f\"- {failure}\" for failure in failures])\n\n    message = \"\\n\".join(lines)\n    send_report(message)\n\n    if failures and len(failures) == len(repos):\n        return 1\n    return 0\n\n\nif __name__ == \"__main__\":\n    raise SystemExit(main())\n"
+    },
+    {
+      "file_path": "repos.json",
+      "content": "{\n  \"repos\": [\n    {\n      \"name\": \"cloudflare/workers-sdk\"\n    },\n    {\n      \"name\": \"vercel/next.js\"\n    },\n    {\n      \"name\": \"python/cpython\"\n    }\n  ]\n}\n"
+    },
+    {
+      "file_path": "requirements.txt",
+      "content": "python-dateutil\nrequests\n"
+    },
+    {
+      "file_path": "run.sh",
+      "content": "#!/usr/bin/env bash\nset -euo pipefail\n\npython3 -m venv .venv\nsource .venv/bin/activate\npython -m pip install --disable-pip-version-check --quiet -r requirements.txt\npython main.py\n"
+    }
+  ]
+}

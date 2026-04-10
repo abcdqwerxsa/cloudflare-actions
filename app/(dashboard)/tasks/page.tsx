@@ -86,6 +86,10 @@ export default function Tasks() {
           </p>
         </div>
         <div className="flex gap-3">
+          <Link href="/tasks/templates" className="flex items-center gap-2 px-5 py-2 text-sm border border-outline-variant/20 bg-surface-container-low text-on-surface font-bold rounded hover:bg-surface-container-high transition-colors">
+            <span className="material-symbols-outlined text-lg">library_books</span>
+            Browse Templates
+          </Link>
           <Link href="/tasks/new" className="flex items-center gap-2 px-5 py-2 text-sm bg-primary text-on-primary font-bold rounded shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all">
             <span className="material-symbols-outlined text-lg">add</span>
             Create New Task

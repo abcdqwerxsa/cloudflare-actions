@@ -1,0 +1,20 @@
+{
+  "name": "API Smoke Probe",
+  "description": "Run lightweight checks against HTTP APIs, assert status codes and JSON fields, and notify on failures.",
+  "category": "Inspection",
+  "runtime": "Python",
+  "icon": "api",
+  "highlights": [
+    "Runs GET and POST smoke checks",
+    "Validates nested JSON keys",
+    "Supports environment variable interpolation in headers and bodies"
+  ],
+  "schedule": "*/15 * * * *",
+  "entrypoint": "run.sh",
+  "env_vars": {
+    "WEBHOOK_URL": "https://example.com/webhook",
+    "API_TOKEN": "",
+    "TIMEOUT_SECONDS": "10",
+    "NOTIFY_ON_SUCCESS": "0"
+  }
+}

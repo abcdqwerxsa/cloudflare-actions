@@ -1,0 +1,16 @@
+{
+  "feeds": [
+    {
+      "name": "Hacker News Frontpage",
+      "url": "https://hnrss.org/frontpage"
+    },
+    {
+      "name": "Python Insider",
+      "url": "https://feeds.feedburner.com/PythonInsider"
+    },
+    {
+      "name": "Cloudflare Blog",
+      "url": "https://blog.cloudflare.com/rss/"
+    }
+  ]
+}

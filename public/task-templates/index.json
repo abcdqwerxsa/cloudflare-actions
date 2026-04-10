@@ -1,0 +1,123 @@
+[
+  {
+    "slug": "api-smoke-probe",
+    "name": "API Smoke Probe",
+    "description": "Run lightweight checks against HTTP APIs, assert status codes and JSON fields, and notify on failures.",
+    "category": "Inspection",
+    "runtime": "Python",
+    "icon": "api",
+    "highlights": [
+      "Runs GET and POST smoke checks",
+      "Validates nested JSON keys",
+      "Supports environment variable interpolation in headers and bodies"
+    ],
+    "schedule": "*/15 * * * *",
+    "envVarNames": [
+      "WEBHOOK_URL",
+      "API_TOKEN",
+      "TIMEOUT_SECONDS",
+      "NOTIFY_ON_SUCCESS"
+    ],
+    "fileCount": 4
+  },
+  {
+    "slug": "github-release-radar",
+    "name": "GitHub Release Radar",
+    "description": "Watch a list of repositories for new GitHub releases and post a release digest to WEBHOOK_URL.",
+    "category": "Information Radar",
+    "runtime": "Python",
+    "icon": "new_releases",
+    "highlights": [
+      "Tracks release activity across multiple repos",
+      "Summarizes release notes in one digest",
+      "Supports authenticated or anonymous GitHub API access"
+    ],
+    "schedule": "0 10,18 * * *",
+    "envVarNames": [
+      "WEBHOOK_URL",
+      "GITHUB_TOKEN",
+      "LOOKBACK_HOURS",
+      "MAX_RELEASES"
+    ],
+    "fileCount": 4
+  },
+  {
+    "slug": "remote-dataset-daily-report",
+    "name": "Remote Dataset Daily Report",
+    "description": "Download a remote CSV or JSON dataset, compute daily aggregates, detect anomalies, and post a summary report.",
+    "category": "Batch Processing",
+    "runtime": "Python",
+    "icon": "table_chart",
+    "highlights": [
+      "Supports both CSV and JSON datasets",
+      "Computes grouped summaries and numeric stats",
+      "Flags anomalies using simple threshold rules"
+    ],
+    "schedule": "0 7 * * *",
+    "envVarNames": [
+      "WEBHOOK_URL",
+      "DATA_URL"
+    ],
+    "fileCount": 4
+  },
+  {
+    "slug": "rss-keyword-radar",
+    "name": "RSS Keyword Radar",
+    "description": "Fetch recent RSS and Atom items, filter them by keyword, and send a markdown digest to WEBHOOK_URL.",
+    "category": "Information Radar",
+    "runtime": "Python",
+    "icon": "rss_feed",
+    "highlights": [
+      "Scans multiple RSS and Atom feeds",
+      "Matches against configurable keywords",
+      "Builds a digest for the last 24 hours"
+    ],
+    "schedule": "0 9 * * *",
+    "envVarNames": [
+      "WEBHOOK_URL",
+      "LOOKBACK_HOURS",
+      "MAX_ITEMS"
+    ],
+    "fileCount": 5
+  },
+  {
+    "slug": "url-digest-batch",
+    "name": "URL Digest Batch",
+    "description": "Fetch a batch of URLs, extract readable text, and produce a digest with per-page and overall summaries.",
+    "category": "Batch Processing",
+    "runtime": "Python",
+    "icon": "summarize",
+    "highlights": [
+      "Fetches and extracts multiple URLs in one run",
+      "Falls back to HTML parsing when text extraction fails",
+      "Produces per-page and overall summaries"
+    ],
+    "schedule": "30 8 * * *",
+    "envVarNames": [
+      "WEBHOOK_URL",
+      "MAX_URLS",
+      "MAX_SENTENCES_PER_ITEM"
+    ],
+    "fileCount": 4
+  },
+  {
+    "slug": "website-availability-check",
+    "name": "Website Availability Check",
+    "description": "Check site status codes, latency, and required text snippets. Notify only on failure by default.",
+    "category": "Inspection",
+    "runtime": "Python",
+    "icon": "monitoring",
+    "highlights": [
+      "Checks status code, latency, and page content",
+      "Fails fast when any required assertion breaks",
+      "Only sends success alerts if you opt in"
+    ],
+    "schedule": "*/10 * * * *",
+    "envVarNames": [
+      "WEBHOOK_URL",
+      "TIMEOUT_SECONDS",
+      "NOTIFY_ON_SUCCESS"
+    ],
+    "fileCount": 4
+  }
+]

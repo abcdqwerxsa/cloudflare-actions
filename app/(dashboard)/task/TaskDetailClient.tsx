@@ -1,9 +1,17 @@
 'use client';
 import { API_BASE } from '@/lib/api';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { TASK_TEMPLATE_SUMMARIES } from '@/lib/task-templates.generated';
+import {
+  buildTemplatePayloadFromTask,
+  downloadTemplateBundle,
+  ensureUniqueTemplateSlug,
+  loadLocalTemplates,
+  upsertLocalTemplate,
+} from '@/lib/task-template-utils';
 
 interface TaskFile {
   id: string;
@@ -40,6 +48,16 @@ interface FileEntry {
   is_entrypoint: boolean;
 }
 
+interface TemplateDraft {
+  name: string;
+  slug: string;
+  description: string;
+  category: string;
+  runtime: string;
+  icon: string;
+  highlightsText: string;
+}
+
 function getFileIcon(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() || '';
   const icons: Record<string, string> = {
@@ -51,6 +69,18 @@ function getFileIcon(path: string): string {
     yml: 'settings', yaml: 'settings',
   };
   return icons[ext] || 'draft';
+}
+
+function countEnvVars(envVarsText: string): number {
+  try {
+    const parsed = JSON.parse(envVarsText || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return 0;
+    }
+    return Object.keys(parsed).length;
+  } catch {
+    return 0;
+  }
 }
 
 export default function TaskDetailClient() {
@@ -69,10 +99,29 @@ export default function TaskDetailClient() {
   const [activeFileId, setActiveFileId] = useState('');
   const [showAddFile, setShowAddFile] = useState(false);
   const [newFilePath, setNewFilePath] = useState('');
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [templateNotice, setTemplateNotice] = useState('');
+  const [templateError, setTemplateError] = useState('');
+  const [templateDraft, setTemplateDraft] = useState<TemplateDraft>({
+    name: '',
+    slug: '',
+    description: '',
+    category: 'Custom',
+    runtime: 'Container Task',
+    icon: 'terminal',
+    highlightsText: '',
+  });
 
-  useEffect(() => { if (taskId) loadTask(); else setLoading(false); }, [taskId]);
+  const loadExecutions = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/executions?task_id=${taskId}&limit=5`);
+      const data = await res.json();
+      if (data.executions) setExecutions(data.executions);
+    } catch {}
+  }, [taskId]);
 
-  const loadTask = async () => {
+  const loadTask = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/tasks/${taskId}`);
       const data = await res.json();
@@ -80,6 +129,15 @@ export default function TaskDetailClient() {
         setTask(data.task);
         setSchedule(data.task.schedule || '');
         setEnvVarsText(data.task.env_vars || '{}');
+        setTemplateDraft({
+          name: data.task.name || '',
+          slug: (data.task.name || 'task-template').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'task-template',
+          description: data.task.description || '',
+          category: 'Custom',
+          runtime: 'Container Task',
+          icon: 'terminal',
+          highlightsText: '',
+        });
         if (data.task.files && data.task.files.length > 0) {
           const fileEntries: FileEntry[] = data.task.files.map((f: TaskFile) => ({
             id: f.id || crypto.randomUUID(),
@@ -106,15 +164,9 @@ export default function TaskDetailClient() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [loadExecutions, taskId]);
 
-  const loadExecutions = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/executions?task_id=${taskId}&limit=5`);
-      const data = await res.json();
-      if (data.executions) setExecutions(data.executions);
-    } catch {}
-  };
+  useEffect(() => { if (taskId) loadTask(); else setLoading(false); }, [loadTask, taskId]);
 
   const handleRun = async () => {
     setIsRunning(true);
@@ -189,6 +241,86 @@ export default function TaskDetailClient() {
   const handleDelete = async () => {
     if (!confirm('Delete this task?')) return;
     try { await fetch(`${API_BASE}/tasks/${taskId}`, { method: 'DELETE' }); router.push('/tasks'); } catch {}
+  };
+
+  const openTemplateModal = () => {
+    const slugBase = (task?.name || 'task-template')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'task-template';
+    setTemplateDraft({
+      name: task?.name || '',
+      slug: slugBase,
+      description: task?.description || '',
+      category: 'Custom',
+      runtime: 'Container Task',
+      icon: 'terminal',
+      highlightsText: '',
+    });
+    setTemplateError('');
+    setTemplateNotice('');
+    setShowTemplateModal(true);
+  };
+
+  const buildTemplateFromCurrentTask = () => {
+    const envVars = JSON.parse(envVarsText || '{}');
+    const builtInSlugs = TASK_TEMPLATE_SUMMARIES.map((template) => template.slug);
+    const localSlugs = loadLocalTemplates().map((template) => template.slug);
+    const nextSlug = ensureUniqueTemplateSlug(
+      templateDraft.slug || templateDraft.name || task?.name || 'task-template',
+      [...builtInSlugs, ...localSlugs],
+    );
+
+    return buildTemplatePayloadFromTask({
+      slug: nextSlug,
+      name: templateDraft.name || task?.name || 'Untitled Template',
+      description: templateDraft.description,
+      category: templateDraft.category,
+      runtime: templateDraft.runtime,
+      icon: templateDraft.icon,
+      highlights: templateDraft.highlightsText
+        .split('\n')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      schedule: schedule || null,
+      entrypoint: files.find((file) => file.is_entrypoint)?.file_path || 'run.sh',
+      env_vars: envVars,
+      files: files.map((file) => ({
+        file_path: file.file_path,
+        content: file.content,
+      })),
+    });
+  };
+
+  const handleSaveTemplateToLibrary = async () => {
+    setTemplateSaving(true);
+    setTemplateError('');
+    setTemplateNotice('');
+
+    try {
+      const template = buildTemplateFromCurrentTask();
+      upsertLocalTemplate(template);
+      setTemplateNotice(`Saved "${template.name}" to your local template library`);
+    } catch (err) {
+      console.error('Failed to save template:', err);
+      setTemplateError(err instanceof Error ? err.message : 'Failed to save template');
+    } finally {
+      setTemplateSaving(false);
+    }
+  };
+
+  const handleDownloadTemplateBundle = async () => {
+    setTemplateError('');
+    setTemplateNotice('');
+
+    try {
+      const template = buildTemplateFromCurrentTask();
+      downloadTemplateBundle(template);
+      setTemplateNotice(`Downloaded "${template.slug}.template.json"`);
+    } catch (err) {
+      console.error('Failed to download template:', err);
+      setTemplateError(err instanceof Error ? err.message : 'Failed to download template');
+    }
   };
 
   const updateFile = (id: string, updates: Partial<FileEntry>) => {
@@ -336,7 +468,12 @@ export default function TaskDetailClient() {
           </div>
 
           <div className="flex items-center justify-between">
-            <button onClick={handleDelete} className="flex items-center gap-2 px-4 py-2 text-error hover:bg-error/10 rounded-lg transition-all text-xs font-bold font-headline"><span className="material-symbols-outlined text-lg">delete</span>DELETE TASK</button>
+            <div className="flex items-center gap-3">
+              <button onClick={handleDelete} className="flex items-center gap-2 px-4 py-2 text-error hover:bg-error/10 rounded-lg transition-all text-xs font-bold font-headline"><span className="material-symbols-outlined text-lg">delete</span>DELETE TASK</button>
+              <button onClick={openTemplateModal} className="flex items-center gap-2 px-4 py-2 text-tertiary hover:bg-tertiary/10 rounded-lg transition-all text-xs font-bold font-headline">
+                <span className="material-symbols-outlined text-lg">library_add</span>SAVE AS TEMPLATE
+              </button>
+            </div>
             <div className="flex items-center gap-4">
               <Link href="/tasks" className="px-6 py-2.5 text-on-surface border border-outline-variant/30 hover:bg-surface-container-high rounded-lg transition-all text-xs font-bold font-headline tracking-widest">CANCEL</Link>
               <button onClick={handleSave} disabled={saving} className="px-8 py-2.5 bg-primary text-on-primary hover:opacity-90 rounded-lg transition-all text-xs font-bold font-headline tracking-widest shadow-lg shadow-primary/20 flex items-center gap-2 disabled:opacity-50">
@@ -346,6 +483,159 @@ export default function TaskDetailClient() {
           </div>
         </div>
       </div>
+
+      {showTemplateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-6">
+          <div className="w-full max-w-3xl rounded-2xl border border-outline-variant/10 bg-[#0b1326] shadow-2xl shadow-black/40">
+            <div className="flex items-start justify-between gap-4 border-b border-outline-variant/10 px-6 py-5">
+              <div>
+                <h2 className="text-2xl font-headline font-bold text-on-surface">Save As Template</h2>
+                <p className="mt-2 text-sm text-slate-400">
+                  Export the current task editor state as a reusable template bundle, or save it into your local template library for quick reuse.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowTemplateModal(false)}
+                className="inline-flex items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-container-low px-3 py-2 text-xs font-bold tracking-widest text-on-surface hover:bg-surface-container-high transition-colors"
+              >
+                <span className="material-symbols-outlined text-base">close</span>
+                CLOSE
+              </button>
+            </div>
+
+            <div className="space-y-5 px-6 py-5">
+              {templateNotice && (
+                <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">
+                  {templateNotice}
+                </div>
+              )}
+              {templateError && (
+                <div className="rounded-xl border border-error/20 bg-error/5 px-4 py-3 text-sm text-error">
+                  {templateError}
+                </div>
+              )}
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5 ml-1">Template Name</label>
+                  <input
+                    className="w-full rounded-lg border border-outline-variant/20 bg-surface-container-lowest px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    type="text"
+                    value={templateDraft.name}
+                    onChange={(e) => setTemplateDraft((prev) => ({ ...prev, name: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5 ml-1">Slug</label>
+                  <input
+                    className="w-full rounded-lg border border-outline-variant/20 bg-surface-container-lowest px-4 py-2.5 text-sm font-mono text-on-surface outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    type="text"
+                    value={templateDraft.slug}
+                    onChange={(e) => setTemplateDraft((prev) => ({ ...prev, slug: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5 ml-1">Category</label>
+                  <input
+                    className="w-full rounded-lg border border-outline-variant/20 bg-surface-container-lowest px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    type="text"
+                    value={templateDraft.category}
+                    onChange={(e) => setTemplateDraft((prev) => ({ ...prev, category: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5 ml-1">Runtime Label</label>
+                  <input
+                    className="w-full rounded-lg border border-outline-variant/20 bg-surface-container-lowest px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    type="text"
+                    value={templateDraft.runtime}
+                    onChange={(e) => setTemplateDraft((prev) => ({ ...prev, runtime: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5 ml-1">Icon</label>
+                  <input
+                    className="w-full rounded-lg border border-outline-variant/20 bg-surface-container-lowest px-4 py-2.5 text-sm text-on-surface outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    type="text"
+                    value={templateDraft.icon}
+                    onChange={(e) => setTemplateDraft((prev) => ({ ...prev, icon: e.target.value }))}
+                    placeholder="terminal"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1.5 ml-1">Current Schedule</label>
+                  <div className="rounded-lg border border-outline-variant/20 bg-surface-container-lowest px-4 py-2.5 text-sm font-mono text-tertiary">
+                    {schedule || 'Manual only'}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5 ml-1">Description</label>
+                <textarea
+                  className="w-full rounded-lg border border-outline-variant/20 bg-surface-container-lowest px-4 py-2.5 text-sm text-on-surface outline-none resize-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  rows={3}
+                  value={templateDraft.description}
+                  onChange={(e) => setTemplateDraft((prev) => ({ ...prev, description: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1.5 ml-1">Highlights</label>
+                <textarea
+                  className="w-full rounded-lg border border-outline-variant/20 bg-surface-container-lowest px-4 py-2.5 text-sm text-on-surface outline-none resize-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  rows={4}
+                  value={templateDraft.highlightsText}
+                  onChange={(e) => setTemplateDraft((prev) => ({ ...prev, highlightsText: e.target.value }))}
+                  placeholder={`One highlight per line\nIncludes ${files.length} files\nUses ${countEnvVars(envVarsText)} environment variables`}
+                />
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                <div className="rounded-xl border border-outline-variant/10 bg-surface-container-lowest p-4">
+                  <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500">Files</div>
+                  <div className="mt-2 text-2xl font-headline font-bold text-on-surface">{files.length}</div>
+                </div>
+                <div className="rounded-xl border border-outline-variant/10 bg-surface-container-lowest p-4">
+                  <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500">Entrypoint</div>
+                  <div className="mt-2 text-sm font-mono text-tertiary">{files.find((file) => file.is_entrypoint)?.file_path || 'run.sh'}</div>
+                </div>
+                <div className="rounded-xl border border-outline-variant/10 bg-surface-container-lowest p-4">
+                  <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500">Env Vars</div>
+                  <div className="mt-2 text-2xl font-headline font-bold text-on-surface">{countEnvVars(envVarsText)}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-4 border-t border-outline-variant/10 px-6 py-5">
+              <Link
+                href="/tasks/templates"
+                className="inline-flex items-center gap-2 text-xs font-bold tracking-widest text-slate-400 hover:text-on-surface transition-colors"
+              >
+                <span className="material-symbols-outlined text-base">library_books</span>
+                OPEN TEMPLATE LIBRARY
+              </Link>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleDownloadTemplateBundle}
+                  className="inline-flex items-center gap-2 rounded-lg border border-outline-variant/20 bg-surface-container-lowest px-4 py-2 text-xs font-bold tracking-widest text-on-surface hover:bg-surface-container-high transition-colors"
+                >
+                  <span className="material-symbols-outlined text-base">download</span>
+                  DOWNLOAD JSON
+                </button>
+                <button
+                  onClick={handleSaveTemplateToLibrary}
+                  disabled={templateSaving}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-bold tracking-widest text-on-primary shadow-lg shadow-primary/20 hover:opacity-90 transition-opacity disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-base">library_add</span>
+                  {templateSaving ? 'SAVING...' : 'SAVE TO LIBRARY'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
